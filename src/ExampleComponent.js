@@ -20,7 +20,7 @@ const hf = HyperFormula.buildEmpty({ licenseKey: 'internal-use-in-handsontable' 
 const sheetName = hf.addSheet("main");
 const sheetId = hf.getSheetId(sheetName);
 
-const ExampleSpreadsheetIframeReliable = () => {
+const ExampleSpreadsheetIframeWithTimestamp = () => {
   const [formattedData, setFormattedData] = useState([]);
   const hotRef = useRef(null);
   const loadingRef = useRef(false);
@@ -29,13 +29,14 @@ const ExampleSpreadsheetIframeReliable = () => {
   // Track last edited cells for highlighting
   const lastEditsRef = useRef([]);
 
-  // Flush editor to ensure last value is captured
+  // Temporary store for all updated cells with timestamp
+  const tempStoreRef = useRef({});
+
   const flushEditor = () => {
     const hotInstance = hotRef.current?.hotInstance;
     if (hotInstance?.getActiveEditor?.()) hotInstance.getActiveEditor().finishEditing(false);
   };
 
-  // Initialize table
   const initializeTable = (model) => {
     modelRef.current = model;
     loadingRef.current = true;
@@ -58,9 +59,8 @@ const ExampleSpreadsheetIframeReliable = () => {
     }, 0);
   };
 
-  // Debounced afterChange: update all current data
+  // Debounced afterChange
   const debouncedRef = useRef(null);
-
   const afterChange = (changes, type) => {
     if (!changes?.length || type === 'loadData' || loadingRef.current) return;
     const relevantTypes = ['edit','Autofill.fill','CopyPaste.cut','CopyPaste.paste'];
@@ -76,30 +76,36 @@ const ExampleSpreadsheetIframeReliable = () => {
       const hotInstance = hotRef.current.hotInstance;
       const currentData = hotInstance.getData();
 
-      // Build updated_data array from current Handsontable content
-      const updatedData = currentData.map((row, rIndex) => {
-        const rowId = row[modelRef.current.fields.indexOf(modelRef.current.id)];
-        return modelRef.current.columns.reduce((acc, colName, cIndex) => {
-          acc[colName] = row[cIndex];
-          acc[modelRef.current.id] = rowId;
-          return acc;
-        }, {});
+      // Update temp store with timestamp
+      changes.forEach(([rowIndex, colIndex, oldValue, newValue]) => {
+        const rowId = currentData[rowIndex][modelRef.current.fields.indexOf(modelRef.current.id)];
+        const colName = formattedData.columns[colIndex];
+
+        if (!tempStoreRef.current[rowId]) tempStoreRef.current[rowId] = {};
+        tempStoreRef.current[rowId][colName] = {
+          value: newValue,
+          timestamp: new Date().toISOString()
+        };
+        tempStoreRef.current[rowId][modelRef.current.id] = rowId;
       });
 
-      // Send entire current data to parent
+      const updatedData = Object.values(tempStoreRef.current);
+
       if (window.parent) {
+        // Send all edited cells with timestamp
         window.parent.postMessage({ type: 'UPDATED_DATA', updated_data: updatedData }, '*');
 
-        // Optionally send only the last changed cell
+        // Send last changed cell
         const [lastChange] = changes.slice(-1);
         const [rowIndex, colIndex, oldValue, newValue] = lastChange;
         const lastChangedCell = {
           [modelRef.current.id]: currentData[rowIndex][modelRef.current.fields.indexOf(modelRef.current.id)],
-          [modelRef.current.columns[colIndex]]: newValue
+          [formattedData.columns[colIndex]]: newValue,
+          timestamp: new Date().toISOString()
         };
         window.parent.postMessage({ type: 'CELL_CHANGED', cell: lastChangedCell }, '*');
       }
-    }, 150); // 150ms debounce
+    }, 150); // debounce 150ms
   };
 
   // Highlight recently edited cells
@@ -121,6 +127,7 @@ const ExampleSpreadsheetIframeReliable = () => {
       if (event.data?.type === 'SET_MODEL') {
         initializeTable(event.data.model);
         lastEditsRef.current = [];
+        tempStoreRef.current = {}; // reset temp store when model changes
       }
     };
     window.addEventListener('message', handler);
@@ -161,4 +168,4 @@ const ExampleSpreadsheetIframeReliable = () => {
   );
 };
 
-export default ExampleSpreadsheetIframeReliable;
+export default ExampleSpreadsheetIframeWithTimestamp;
