@@ -43,24 +43,30 @@ const ExampleSpreadsheet = ({ triggerQuery, model, modelUpdate }) => {
 
     // --- Reset updated values whenever formatted_data regenerates ---
     useEffect(() => {
-        if (!formatted_data || !formatted_data.data) return;
+        if (!formatted_data?.data?.length) return;
 
         setAllChanges([]);
         modelUpdate({ updated_data: [] });
     }, [formatted_data]);
 
-    // --- Update model with deduped changes when all_changes changes ---
+    // --- Apply changes to updated_data and immediately reset ---
     useEffect(() => {
         if (!formatted_data?.data?.length) return;
         if (!all_changes?.length) return;
 
+        // Make a fresh copy to avoid mutating state
+        const formattedCopy = JSON.parse(JSON.stringify(formatted_data));
+
         const updated_data = changesToData(
-            formatted_data,
+            formattedCopy,
             all_changes,
             (model.totals && model.totals.row_total) ? model.totals.row_total : false
         );
 
         modelUpdate({ updated_data });
+
+        // Reset all_changes so edits are not reapplied
+        setAllChanges([]);
     }, [all_changes, formatted_data]);
 
     const refreshData = () => {
@@ -100,12 +106,12 @@ const ExampleSpreadsheet = ({ triggerQuery, model, modelUpdate }) => {
     const afterChange = (changes, type) => {
         if (type === 'loadData') return;
         if (loadingRef.current) return; // ignore changes during refresh
-        if (!changes || !changes.length) return;
+        if (!changes?.length) return;
 
         const relevantTypes = ['edit','Autofill.fill','CopyPaste.cut','CopyPaste.paste'];
         if (!relevantTypes.includes(type)) return;
 
-        // dedupe changes by row:col
+        // Deduplicate by row:col keeping latest value
         setAllChanges(prev => {
             const map = {};
 
@@ -129,20 +135,20 @@ const ExampleSpreadsheet = ({ triggerQuery, model, modelUpdate }) => {
         if (!formatted_data) return {};
         let classNames = [];
 
-        if (all_changes && all_changes.length) {
+        if (all_changes?.length) {
             const keySet = new Set(all_changes.map(c => `${c[0]}:${c[1]}`));
             if (keySet.has(`${row}:${col}`)) return { className: 'changed_cell' };
         }
 
         if (formatted_data.grand_total_row && row === formatted_data.grand_total_row) classNames.push('grand_total');
         if (formatted_data.row_total_column && col === formatted_data.row_total_column) classNames.push('row_total');
-        if (formatted_data.sub_total_rows && formatted_data.sub_total_rows.indexOf(row) > -1) classNames.push('sub_total');
+        if (formatted_data.sub_total_rows?.includes(row)) classNames.push('sub_total');
 
         if (classNames.length) return { className: classNames.join(' '), readOnly: true };
         return {};
     }
 
-    if (formatted_data.data && formatted_data.data.length) {
+    if (formatted_data?.data?.length) {
         return <div style={{height: '100vh', width: '100vw'}}>
             <HotTable
                 columnSorting={Boolean(model.columnSorting)}
