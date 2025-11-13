@@ -1,7 +1,6 @@
 import { licenseKey } from '../config.json';
 import React, { useEffect, useState, useRef } from 'react';
 import './styles.css';
-import isEqual from 'lodash/isEqual';
 import { HotTable, HotColumn } from "@handsontable/react";
 import "handsontable/dist/handsontable.min.css";
 import { registerPlugin, AutoColumnSize, Autofill, ColumnSummary, ColumnSorting, ManualColumnFreeze, ContextMenu, DropdownMenu, UndoRedo } from 'handsontable/plugins';
@@ -17,7 +16,7 @@ registerPlugin(ContextMenu);
 registerPlugin(DropdownMenu);
 registerPlugin(UndoRedo);
 
-// HyperFormula instance (for formulas/totals only)
+// HyperFormula instance for display formulas/totals only
 const hf = HyperFormula.buildEmpty({ licenseKey: 'internal-use-in-handsontable' });
 const sheetName = hf.addSheet("main");
 const sheetId = hf.getSheetId(sheetName);
@@ -80,7 +79,7 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
   // HOT callbacks
   const afterChange = (changes, type) => {
     if (!changes?.length || type === 'loadData' || loadingRef.current) return;
-    const relevantTypes = ['edit', 'Autofill.fill', 'CopyPaste.cut', 'CopyPaste.paste'];
+    const relevantTypes = ['edit','Autofill.fill','CopyPaste.cut','CopyPaste.paste'];
     if (!relevantTypes.includes(type)) return;
 
     pushUpdatedData();
@@ -97,7 +96,6 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
     const hotInstance = hotRef.current?.hotInstance;
     if (!hotInstance) return;
 
-    // Pivot/format new data
     let formatted = dataToRows(newData, model.pivot, model.groups, model.value, model.id);
     if (model.totals && formatted?.data?.length) {
       if (model.totals.row_total) formatted = applyRow(formatted);
@@ -105,7 +103,6 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
       if (model.totals.grand_total) formatted = applyGrand(formatted);
     }
 
-    // Clear HOT and reload new data safely
     hotInstance.clear();
     hotInstance.loadData(formatted.data);
     modelUpdate({ updated_data: [] });
