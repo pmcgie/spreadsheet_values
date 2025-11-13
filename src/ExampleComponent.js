@@ -17,7 +17,7 @@ registerPlugin(ContextMenu);
 registerPlugin(DropdownMenu);
 registerPlugin(UndoRedo);
 
-// HyperFormula instance
+// HyperFormula instance for formula evaluation
 const hf = HyperFormula.buildEmpty({ licenseKey: 'internal-use-in-handsontable' });
 const sheetName = hf.addSheet("main");
 const sheetId = hf.getSheetId(sheetName);
@@ -28,12 +28,11 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
   const hotRef = useRef(null);
   const loadingRef = useRef(false);
 
-  // --- Refresh HOT & HF when model.data changes ---
+  // Refresh HOT & HF when model.data changes
   useEffect(() => {
     if (!isEqual(model.data, data)) {
       refreshData();
     }
-    // Clear updated_data when model changes
     modelUpdate({ updated_data: [] });
   }, [model]);
 
@@ -41,7 +40,6 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
     if (!model.data) return;
 
     loadingRef.current = true;
-
     setData(model.data);
 
     let formatted = dataToRows(model.data, model.pivot, model.groups, model.value, model.id);
@@ -66,7 +64,7 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
     setTimeout(() => { loadingRef.current = false; }, 0);
   };
 
-  // --- Apply edits and push exactly current HOT values to Retool ---
+  // Capture exactly what the user entered
   const afterChange = (changes, type) => {
     if (!changes?.length) return;
     if (type === 'loadData' || loadingRef.current) return;
@@ -77,21 +75,22 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
     const hotInstance = hotRef.current?.hotInstance;
     if (!hotInstance) return;
 
-    // Get current values exactly as visible in HOT
+    // 🔹 Get **current visible values** exactly as the user entered
     const currentValues = hotInstance.getData();
 
-    // Update HyperFormula so formulas/totals recalc correctly
+    // 🔹 Optionally update HyperFormula for formula evaluation
     currentValues.forEach((rowData, row) => {
       rowData.forEach((val, col) => {
+        // Only set formulas if needed; raw values are already in HOT
         hf.setCellContents({ sheet: sheetId, row, col }, val);
       });
     });
 
-    // Push current visible table values to Retool
+    // 🔹 Send **raw current HOT values** back to Retool
     modelUpdate({ updated_data: currentValues });
   };
 
-  // --- Cell styling for totals ---
+  // Cell styling for totals
   const columnSummaryStyle = (row, col) => {
     if (!formatted_data) return {};
     let classNames = [];
