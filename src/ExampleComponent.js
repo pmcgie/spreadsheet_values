@@ -17,7 +17,7 @@ registerPlugin(ContextMenu);
 registerPlugin(DropdownMenu);
 registerPlugin(UndoRedo);
 
-// HyperFormula instance for formula evaluation
+// HyperFormula instance
 const hf = HyperFormula.buildEmpty({ licenseKey: 'internal-use-in-handsontable' });
 const sheetName = hf.addSheet("main");
 const sheetId = hf.getSheetId(sheetName);
@@ -64,30 +64,35 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
     setTimeout(() => { loadingRef.current = false; }, 0);
   };
 
-  // Capture exactly what the user entered
-  const afterChange = (changes, type) => {
-    if (!changes?.length) return;
-    if (type === 'loadData' || loadingRef.current) return;
+  // Ensure the editor finishes the current cell before reading values
+  const flushEditor = () => {
+    const hotInstance = hotRef.current?.hotInstance;
+    if (hotInstance?.getActiveEditor && hotInstance.getActiveEditor()) {
+      const editor = hotInstance.getActiveEditor();
+      if (editor && editor.finishEditing) editor.finishEditing(false); // commit current cell
+    }
+  };
 
-    const relevantTypes = ['edit', 'Autofill.fill', 'CopyPaste.cut', 'CopyPaste.paste'];
-    if (!relevantTypes.includes(type)) return;
-
+  // Capture exactly current HOT values for Retool
+  const updateCurrentData = () => {
+    flushEditor();
     const hotInstance = hotRef.current?.hotInstance;
     if (!hotInstance) return;
-
-    // 🔹 Get **current visible values** exactly as the user entered
-    const currentValues = hotInstance.getData();
-
-    // 🔹 Optionally update HyperFormula for formula evaluation
-    currentValues.forEach((rowData, row) => {
-      rowData.forEach((val, col) => {
-        // Only set formulas if needed; raw values are already in HOT
-        hf.setCellContents({ sheet: sheetId, row, col }, val);
-      });
-    });
-
-    // 🔹 Send **raw current HOT values** back to Retool
+    const currentValues = hotInstance.getData(); // exact table values
     modelUpdate({ updated_data: currentValues });
+  };
+
+  // After change event
+  const afterChange = (changes, type) => {
+    if (!changes?.length || type === 'loadData' || loadingRef.current) return;
+    const relevantTypes = ['edit', 'Autofill.fill', 'CopyPaste.cut', 'CopyPaste.paste'];
+    if (!relevantTypes.includes(type)) return;
+    updateCurrentData();
+  };
+
+  // After selection ends, flush editor and update
+  const afterSelectionEnd = () => {
+    updateCurrentData();
   };
 
   // Cell styling for totals
@@ -119,6 +124,7 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
           fillHandle={{ autoInsertRow: false, autoInsertColumn: false }}
           cells={columnSummaryStyle}
           afterChange={afterChange}
+          afterSelectionEnd={afterSelectionEnd}
           allowInsertRow={false}
           allowInsertColumn={false}
           formulas={{ engine: hf, sheetName }}
