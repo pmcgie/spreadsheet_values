@@ -16,27 +16,26 @@ registerPlugin(ContextMenu);
 registerPlugin(DropdownMenu);
 registerPlugin(UndoRedo);
 
-// HyperFormula instance for formulas/totals only
 const hf = HyperFormula.buildEmpty({ licenseKey: 'internal-use-in-handsontable' });
 const sheetName = hf.addSheet("main");
 const sheetId = hf.getSheetId(sheetName);
 
 const ExampleSpreadsheet = ({ model, modelUpdate }) => {
   const [formattedData, setFormattedData] = useState([]);
+  const [accumulatedChanges, setAccumulatedChanges] = useState({});
   const hotRef = useRef(null);
   const loadingRef = useRef(false);
 
-  // Initialize table on mount or when model.data changes
   useEffect(() => {
     if (model.data?.length) {
       initializeTable(model.data);
       modelUpdate({ updated_data: [] });
+      setAccumulatedChanges({});
     }
   }, [model.data]);
 
   const initializeTable = (data) => {
     loadingRef.current = true;
-
     let formatted = dataToRows(data, model.pivot, model.groups, model.value, model.id);
 
     if (model.totals && formatted?.data?.length) {
@@ -55,7 +54,6 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
     }, 0);
   };
 
-  // Commit any in-progress editor value before reading HOT
   const flushEditor = () => {
     const hotInstance = hotRef.current?.hotInstance;
     if (hotInstance?.getActiveEditor?.()) {
@@ -63,7 +61,6 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
     }
   };
 
-  // HOT callback: report only the changed cells
   const afterChange = (changes, type) => {
     if (!changes?.length || type === 'loadData' || loadingRef.current) return;
     const relevantTypes = ['edit','Autofill.fill','CopyPaste.cut','CopyPaste.paste'];
@@ -79,61 +76,31 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
       const colName = formattedData.columns[colIndex];
       const updatedRow = {};
 
-      // Only include the changed column
       updatedRow[colName] = newValue;
-
-      // Preserve the row's unique ID
       updatedRow[model.id] = formattedData.data[rowIndex][model.id];
 
       return updatedRow;
     });
 
-    // Merge changes per row in case multiple cells in the same row were changed
-    const uniqueUpdatedRows = Object.values(updatedRows.reduce((acc, row) => {
-      acc[row[model.id]] = { ...(acc[row[model.id]] || {}), ...row };
-      return acc;
-    }, {}));
+    // Merge changes into accumulatedChanges
+    const newAccumulated = { ...accumulatedChanges };
+    updatedRows.forEach(row => {
+      if (!newAccumulated[row[model.id]]) newAccumulated[row[model.id]] = {};
+      newAccumulated[row[model.id]] = { ...newAccumulated[row[model.id]], ...row };
+    });
 
-    modelUpdate({ updated_data: uniqueUpdatedRows });
+    setAccumulatedChanges(newAccumulated);
+
+    // Convert accumulatedChanges object to array for updated_data
+    modelUpdate({ updated_data: Object.values(newAccumulated) });
   };
 
-  const afterSelectionEnd = () => {
-    // No-op or optional: can push full data if needed
-  };
-
-  // Optional: refresh with latest external data safely
-  const refreshLatestData = (newData) => {
-    if (!newData?.length) return;
-
-    const hotInstance = hotRef.current?.hotInstance;
-    if (!hotInstance) return;
-
-    let formatted = dataToRows(newData, model.pivot, model.groups, model.value, model.id);
-    if (model.totals && formatted?.data?.length) {
-      if (model.totals.row_total) formatted = applyRow(formatted);
-      if (model.totals.sub_total) formatted = applySub(formatted);
-      if (model.totals.grand_total) formatted = applyGrand(formatted);
-    }
-
-    hotInstance.clear();
-    hotInstance.loadData(formatted.data);
-    modelUpdate({ updated_data: [] });
-
-    try { hf.clearSheet(sheetId); } catch(e) {}
-    hf.setSheetContent(sheetId, formatted.data);
-
-    setFormattedData(formatted);
-  };
-
-  // Cell styling for totals
   const columnSummaryStyle = (row, col) => {
     if (!formattedData) return {};
     const classNames = [];
-
     if (formattedData.grand_total_row === row) classNames.push('grand_total');
     if (formattedData.row_total_column === col) classNames.push('row_total');
     if (formattedData.sub_total_rows?.includes(row)) classNames.push('sub_total');
-
     if (classNames.length) return { className: classNames.join(' '), readOnly: true };
     return {};
   };
@@ -157,7 +124,6 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
         allowInsertColumn={false}
         cells={columnSummaryStyle}
         afterChange={afterChange}
-        afterSelectionEnd={afterSelectionEnd}
         formulas={{ engine: hf, sheetName }}
       >
         {formattedData.columns.map((c, i) =>
