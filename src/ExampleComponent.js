@@ -14,18 +14,19 @@ registerPlugin(ContextMenu);
 registerPlugin(DropdownMenu);
 registerPlugin(UndoRedo);
 
+// HyperFormula instance
 const hf = HyperFormula.buildEmpty({ licenseKey: 'internal-use-in-handsontable' });
 const sheetName = hf.addSheet("main");
 const sheetId = hf.getSheetId(sheetName);
 
-const ExampleSpreadsheetSingleCell = () => {
-  const [formattedData, setFormattedData] = useState([]);
+const ExampleSpreadsheetBulkAware = ({ model }) => {
   const hotRef = useRef(null);
-  const modelRef = useRef(null);
+  const [formattedData, setFormattedData] = useState([]);
+  const modelRef = useRef(model);
 
-  const initializeTable = (model) => {
+  // Initialize / refresh Handsontable data
+  const initializeTable = () => {
     modelRef.current = model;
-
     let formatted = dataToRows(model.data, model.pivot, model.groups, model.value, model.id);
 
     if (model.totals && formatted?.data?.length) {
@@ -43,32 +44,50 @@ const ExampleSpreadsheetSingleCell = () => {
     }, 0);
   };
 
+  // afterChange handler: single vs bulk edits
   const afterChange = (changes, type) => {
     if (!changes?.length || type === 'loadData') return;
 
-    const relevantTypes = ['edit','Autofill.fill','CopyPaste.cut','CopyPaste.paste'];
-    if (!relevantTypes.includes(type)) return;
-
-    const [row, col, oldValue, newValue] = changes[changes.length - 1];
     const hotInstance = hotRef.current.hotInstance;
-    const rowId = hotInstance.getDataAtCell(row, modelRef.current.fields.indexOf(modelRef.current.id));
-    const colName = formattedData.columns[col];
+    const { id: fieldId, value: valueField, groups } = modelRef.current;
+    let updated_cells = [];
 
-    const changedCell = {
-      [modelRef.current.id]: rowId,
-      [colName]: newValue,
-      timestamp: new Date().toISOString()
-    };
+    const bulkTypes = ['Autofill.fill', 'CopyPaste.paste', 'CopyPaste.cut'];
+    if (bulkTypes.includes(type)) {
+      // Bulk update → send all changed cells
+      changes.forEach(([row, col, oldVal, newVal]) => {
+        const rowData = hotInstance.getDataAtRow(row);
+        const id_index = col - groups.length;
+        const data_id = JSON.parse(rowData[rowData.length - 1])[id_index];
+        updated_cells.push({
+          [fieldId]: data_id,
+          [valueField]: Number(newVal),
+          timestamp: new Date().toISOString()
+        });
+      });
+    } else {
+      // Single cell → only last changed cell
+      const [row, col, oldVal, newVal] = changes[changes.length - 1];
+      const rowData = hotInstance.getDataAtRow(row);
+      const id_index = col - groups.length;
+      const data_id = JSON.parse(rowData[rowData.length - 1])[id_index];
+      updated_cells.push({
+        [fieldId]: data_id,
+        [valueField]: Number(newVal),
+        timestamp: new Date().toISOString()
+      });
+    }
 
-    // Send to Retool
+    // Send updated data to Retool parent / iframe
     if (window.parent) {
       window.parent.postMessage({
         type: 'UPDATED_DATA',
-        updated_data: [changedCell]
+        updated_data: updated_cells
       }, '*');
     }
   };
 
+  // Styling for totals/subtotals
   const columnSummaryStyle = (row, col) => {
     const classNames = [];
     if (formattedData.grand_total_row === row) classNames.push('grand_total');
@@ -77,13 +96,10 @@ const ExampleSpreadsheetSingleCell = () => {
     return classNames.length ? { className: classNames.join(' '), readOnly: false } : {};
   };
 
+  // Refresh table on model changes
   useEffect(() => {
-    const handler = (event) => {
-      if (event.data?.type === 'SET_MODEL') initializeTable(event.data.model);
-    };
-    window.addEventListener('message', handler);
-    return () => window.removeEventListener('message', handler);
-  }, []);
+    initializeTable();
+  }, [model]);
 
   if (!formattedData?.data?.length) return <></>;
 
@@ -91,7 +107,9 @@ const ExampleSpreadsheetSingleCell = () => {
     <HotTable
       ref={hotRef}
       data={formattedData.data}
-      colHeaders={formattedData.columns.map(c => modelRef.current?.labels ? modelRef.current.labels[modelRef.current.fields.indexOf(c)] || c : c)}
+      colHeaders={formattedData.columns.map(c =>
+        modelRef.current?.labels ? modelRef.current.labels[modelRef.current.fields.indexOf(c)] || c : c
+      )}
       columnSorting={Boolean(modelRef.current?.columnSorting)}
       undoRedo={true}
       contextMenu={Boolean(modelRef.current?.contextMenu)}
@@ -119,4 +137,4 @@ const ExampleSpreadsheetSingleCell = () => {
   );
 };
 
-export default ExampleSpreadsheetSingleCell;
+export default ExampleSpreadsheetBulkAware;
