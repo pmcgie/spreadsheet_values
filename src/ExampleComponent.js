@@ -17,35 +17,31 @@ registerPlugin(ContextMenu);
 registerPlugin(DropdownMenu);
 registerPlugin(UndoRedo);
 
-// HyperFormula instance (for display formulas/totals only)
+// HyperFormula instance (for formulas/totals display only)
 const hf = HyperFormula.buildEmpty({ licenseKey: 'internal-use-in-handsontable' });
 const sheetName = hf.addSheet("main");
 const sheetId = hf.getSheetId(sheetName);
 
 const ExampleSpreadsheet = ({ model, modelUpdate }) => {
-  const [data, setData] = useState([]);
-  const [formatted_data, setFormattedData] = useState([]);
+  const [formattedData, setFormattedData] = useState([]);
   const hotRef = useRef(null);
   const loadingRef = useRef(false);
 
-  // Refresh HOT & HF when model.data changes
+  // Initialize table on mount or when model.data changes
   useEffect(() => {
-    if (!isEqual(model.data, data)) {
-      refreshData();
+    if (model.data?.length) {
+      initializeTable();
+      modelUpdate({ updated_data: [] }); // reset updated_data on initial load
     }
-    modelUpdate({ updated_data: [] });
-  }, [model]);
+  }, [model.data]);
 
-  const refreshData = () => {
-    if (!model.data) return;
-
+  const initializeTable = () => {
     loadingRef.current = true;
-    setData(model.data);
 
+    // Pivot/format data for HOT
     let formatted = dataToRows(model.data, model.pivot, model.groups, model.value, model.id);
 
     if (model.totals && formatted?.data?.length) {
-      // Apply totals for display only, do NOT overwrite HOT data
       if (model.totals.row_total) formatted = applyRow(formatted);
       if (model.totals.sub_total) formatted = applySub(formatted);
       if (model.totals.grand_total) formatted = applyGrand(formatted);
@@ -53,19 +49,19 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
 
     setFormattedData(formatted);
 
-    if (formatted?.data?.length) {
-      try { hf.clearSheet(sheetId); } catch (e) {}
-      hf.setSheetContent(sheetId, formatted.data);
-
+    // Load into HOT
+    setTimeout(() => {
       if (hotRef.current) {
         hotRef.current.loadData(formatted.data);
       }
-    }
-
-    setTimeout(() => { loadingRef.current = false; }, 0);
+      // Load into HyperFormula (for totals only)
+      try { hf.clearSheet(sheetId); } catch(e) {}
+      hf.setSheetContent(sheetId, formatted.data);
+      loadingRef.current = false;
+    }, 0);
   };
 
-  // Helper: flush editor to commit in-progress edits
+  // Ensure editor commits value before reading
   const flushEditor = () => {
     const hotInstance = hotRef.current?.hotInstance;
     if (hotInstance?.getActiveEditor && hotInstance.getActiveEditor()) {
@@ -74,85 +70,75 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
     }
   };
 
-  // Update Retool with **exact HOT values only**
+  // Push HOT values to Retool
   const pushUpdatedData = () => {
     flushEditor();
     const hotInstance = hotRef.current?.hotInstance;
     if (!hotInstance) return;
-
-    // Read only the current HOT values — do NOT read from HF
     const currentValues = hotInstance.getData();
     modelUpdate({ updated_data: currentValues });
   };
 
-  // After change event
+  // HOT callbacks
   const afterChange = (changes, type) => {
     if (!changes?.length || type === 'loadData' || loadingRef.current) return;
-
     const relevantTypes = ['edit', 'Autofill.fill', 'CopyPaste.cut', 'CopyPaste.paste'];
     if (!relevantTypes.includes(type)) return;
-
     pushUpdatedData();
   };
 
-  // After selection end event
   const afterSelectionEnd = () => {
     pushUpdatedData();
   };
 
-  // Cell styling for totals
+  // Cell styling
   const columnSummaryStyle = (row, col) => {
-    if (!formatted_data) return {};
-    let classNames = [];
+    if (!formattedData) return {};
+    const classNames = [];
 
-    if (formatted_data.grand_total_row && row === formatted_data.grand_total_row) classNames.push('grand_total');
-    if (formatted_data.row_total_column && col === formatted_data.row_total_column) classNames.push('row_total');
-    if (formatted_data.sub_total_rows?.includes(row)) classNames.push('sub_total');
+    if (formattedData.grand_total_row === row) classNames.push('grand_total');
+    if (formattedData.row_total_column === col) classNames.push('row_total');
+    if (formattedData.sub_total_rows?.includes(row)) classNames.push('sub_total');
 
     if (classNames.length) return { className: classNames.join(' '), readOnly: true };
     return {};
   };
 
-  if (formatted_data?.data?.length) {
-    return (
-      <div style={{ height: '100vh', width: '100vw' }}>
-        <HotTable
-          ref={hotRef}
-          columnSorting={Boolean(model.columnSorting)}
-          undoRedo={true}
-          contextMenu={Boolean(model.contextMenu)}
-          manualColumnFreeze={model.fixedColumnsLeft && Number(model.fixedColumnsLeft) > 0}
-          fixedColumnsLeft={model.fixedColumnsLeft && Number(model.fixedColumnsLeft) > 0 ? model.fixedColumnsLeft : 0}
-          data={formatted_data.data}
-          licenseKey={licenseKey}
-          colWidths={model.colWidths}
-          fillHandle={{ autoInsertRow: false, autoInsertColumn: false }}
-          cells={columnSummaryStyle}
-          afterChange={afterChange}
-          afterSelectionEnd={afterSelectionEnd}
-          allowInsertRow={false}
-          allowInsertColumn={false}
-          formulas={{ engine: hf, sheetName }}
-          colHeaders={formatted_data.columns.map(c => model.labels ? model.labels[model.fields.indexOf(c)] || c : c)}
-        >
-          {formatted_data.columns.map((c, i) =>
-            c !== '_ids' ? (
-              <HotColumn
-                key={c}
-                data={i}
-                readOnly={model.groups.indexOf(c) > -1}
-                type={model.groups.indexOf(c) > -1 ? 'numeric' : 'text'}
-              />
-            ) : (
-              <React.Fragment key={c} />
-            )
-          )}
-        </HotTable>
-      </div>
-    );
-  } else {
-    return <React.Fragment />;
-  }
+  if (!formattedData?.data?.length) return <></>;
+
+  return (
+    <div style={{ height: '100vh', width: '100vw' }}>
+      <HotTable
+        ref={hotRef}
+        data={formattedData.data}
+        colHeaders={formattedData.columns.map(c => model.labels ? model.labels[model.fields.indexOf(c)] || c : c)}
+        columnSorting={Boolean(model.columnSorting)}
+        undoRedo={true}
+        contextMenu={Boolean(model.contextMenu)}
+        manualColumnFreeze={model.fixedColumnsLeft && Number(model.fixedColumnsLeft) > 0}
+        fixedColumnsLeft={model.fixedColumnsLeft && Number(model.fixedColumnsLeft) > 0 ? model.fixedColumnsLeft : 0}
+        colWidths={model.colWidths}
+        fillHandle={{ autoInsertRow: false, autoInsertColumn: false }}
+        allowInsertRow={false}
+        allowInsertColumn={false}
+        cells={columnSummaryStyle}
+        afterChange={afterChange}
+        afterSelectionEnd={afterSelectionEnd}
+        formulas={{ engine: hf, sheetName }}
+      >
+        {formattedData.columns.map((c, i) =>
+          c !== '_ids' ? (
+            <HotColumn
+              key={c}
+              data={i}
+              readOnly={model.groups.indexOf(c) > -1}
+              type={model.groups.indexOf(c) > -1 ? 'numeric' : 'text'}
+            />
+          ) : <React.Fragment key={c} />
+        )}
+      </HotTable>
+    </div>
+  );
 };
 
 export default ExampleSpreadsheet;
