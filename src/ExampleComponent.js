@@ -7,6 +7,7 @@ import { registerPlugin, AutoColumnSize, Autofill, ColumnSummary, ColumnSorting,
 import { HyperFormula } from 'hyperformula';
 import { applyGrand, applyRow, applySub, dataToRows } from './helpers';
 
+// Register plugins
 registerPlugin(AutoColumnSize);
 registerPlugin(Autofill);
 registerPlugin(ColumnSummary);
@@ -23,15 +24,16 @@ const sheetId = hf.getSheetId(sheetName);
 
 const ExampleSpreadsheet = ({ model, modelUpdate }) => {
   const [formattedData, setFormattedData] = useState([]);
-  const [dirtyCells, setDirtyCells] = useState({});
   const hotRef = useRef(null);
   const loadingRef = useRef(false);
+  const accumulatedChangesRef = useRef({}); // user-edited cells
 
   // Initialize table when model.data changes
   useEffect(() => {
     if (model.data?.length) {
       initializeTable(model.data);
-      setDirtyCells({});
+      accumulatedChangesRef.current = {};
+      modelUpdate({ updated_data: [] });
     }
   }, [model.data]);
 
@@ -56,14 +58,13 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
     }, 0);
   };
 
+  // Commit in-progress editor
   const flushEditor = () => {
     const hotInstance = hotRef.current?.hotInstance;
-    if (hotInstance?.getActiveEditor?.()) {
-      hotInstance.getActiveEditor().finishEditing(false);
-    }
+    if (hotInstance?.getActiveEditor?.()) hotInstance.getActiveEditor().finishEditing(false);
   };
 
-  // HOT callback: mark dirty cells but do not commit yet
+  // AfterChange handler: accumulate user changes
   const afterChange = (changes, type) => {
     if (!changes?.length || type === 'loadData' || loadingRef.current) return;
     const relevantTypes = ['edit','Autofill.fill','CopyPaste.cut','CopyPaste.paste'];
@@ -74,23 +75,42 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
 
     flushEditor();
 
-    setDirtyCells(prev => {
-      const next = { ...prev };
-      changes.forEach(([rowIndex, colIndex, oldValue, newValue]) => {
-        const colName = formattedData.columns[colIndex];
-        const rowId = formattedData.data[rowIndex][model.id];
-        if (!next[rowId]) next[rowId] = {};
-        next[rowId][colName] = newValue;
-        next[rowId][model.id] = rowId;
-      });
-      return next;
+    changes.forEach(([rowIndex, colIndex, oldValue, newValue]) => {
+      const colName = formattedData.columns[colIndex];
+      const rowId = formattedData.data[rowIndex][model.id];
+
+      if (!accumulatedChangesRef.current[rowId]) accumulatedChangesRef.current[rowId] = {};
+      accumulatedChangesRef.current[rowId][colName] = newValue;
+      accumulatedChangesRef.current[rowId][model.id] = rowId;
     });
+
+    // Immediately update latest cell in model.updated_data if desired
+    // modelUpdate({ updated_data: Object.values(accumulatedChangesRef.current) });
   };
 
-  // Commit all dirty cells to model.updated_data
+  // Commit all accumulated changes manually
   const commitChanges = () => {
-    modelUpdate({ updated_data: Object.values(dirtyCells) });
-    setDirtyCells({});
+    modelUpdate({ updated_data: Object.values(accumulatedChangesRef.current) });
+    accumulatedChangesRef.current = {};
+  };
+
+  // Apply HyperFormula/totals without overwriting user changes
+  const applyFormulaValuesSafely = (hotData) => {
+    return hotData.map((row, rowIndex) => {
+      const rowId = row[model.id];
+      const newRow = [...row];
+
+      formattedData.columns.forEach((colName, colIndex) => {
+        // Only overwrite if user hasn't changed this cell
+        if (!accumulatedChangesRef.current[rowId]?.[colName]) {
+          try {
+            const hfValue = hf.getCellValue(sheetId, rowIndex, colIndex);
+            if (hfValue !== undefined) newRow[colIndex] = hfValue;
+          } catch (e) {}
+        }
+      });
+      return newRow;
+    });
   };
 
   // Highlight dirty cells
@@ -103,7 +123,9 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
 
     const rowId = formattedData.data?.[row]?.[model.id];
     const colName = formattedData.columns[col];
-    if (rowId && dirtyCells[rowId]?.[colName] !== undefined) classNames.push('dirty_cell');
+    if (rowId && accumulatedChangesRef.current[rowId]?.[colName] !== undefined) {
+      classNames.push('dirty_cell');
+    }
 
     return classNames.length ? { className: classNames.join(' '), readOnly: false } : {};
   };
@@ -111,13 +133,14 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
   if (!formattedData?.data?.length) return <></>;
 
   return (
-    <div style={{ height: '100vh', width: '100vw' }}>
+    <div style={{ height: '100vh', width: '100vw', position: 'relative' }}>
       <button
         onClick={commitChanges}
-        style={{ position: 'absolute', zIndex: 1000, top: 10, right: 10 }}
+        style={{ position: 'absolute', top: 10, right: 10, zIndex: 1000 }}
       >
         Commit Changes
       </button>
+
       <HotTable
         ref={hotRef}
         data={formattedData.data}
