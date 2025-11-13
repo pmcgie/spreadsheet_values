@@ -18,69 +18,33 @@ registerPlugin(DropdownMenu);
 registerPlugin(UndoRedo);
 
 // HyperFormula instance shared across renders
-const hf = HyperFormula.buildEmpty({
-    licenseKey: 'internal-use-in-handsontable'
-});
+const hf = HyperFormula.buildEmpty({ licenseKey: 'internal-use-in-handsontable' });
 const sheetName = hf.addSheet("main");
 const sheetId = hf.getSheetId(sheetName);
 
-const ExampleSpreadsheet = ({ triggerQuery, model, modelUpdate }) => {
+const ExampleSpreadsheet = ({ model, modelUpdate }) => {
     const [data, setData] = useState([]);
     const [formatted_data, setFormattedData] = useState([]);
-    const [all_changes, setAllChanges] = useState([]);
     const loadingRef = useRef(false);
+    const hotRef = useRef(null);
 
-    // --- Reset updated values whenever model changes ---
+    // --- Refresh data when model changes ---
     useEffect(() => {
-        setAllChanges([]);
-        modelUpdate({ updated_data: [] });
-
         if (!isEqual(model.data, data)) {
             refreshData();
         }
-        // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [model]);
-
-    // --- Reset updated values whenever formatted_data regenerates ---
-    useEffect(() => {
-        if (!formatted_data?.data?.length) return;
-
-        setAllChanges([]);
+        // Reset updated_data when model changes
         modelUpdate({ updated_data: [] });
-    }, [formatted_data]);
-
-    // --- Apply changes to updated_data and immediately reset ---
-    useEffect(() => {
-        if (!formatted_data?.data?.length) return;
-        if (!all_changes?.length) return;
-
-        // Make a fresh copy to avoid mutating state
-        const formattedCopy = JSON.parse(JSON.stringify(formatted_data));
-
-        const updated_data = changesToData(
-            formattedCopy,
-            all_changes,
-            (model.totals && model.totals.row_total) ? model.totals.row_total : false
-        );
-
-        modelUpdate({ updated_data });
-
-        // Reset all_changes so edits are not reapplied
-        setAllChanges([]);
-    }, [all_changes, formatted_data]);
+    }, [model]);
 
     const refreshData = () => {
         if (!model.data) return;
 
-        const incoming = model.data; // fresh reference
+        loadingRef.current = true;
 
-        loadingRef.current = true; // prevent capturing load events
+        setData(model.data);
 
-        setData(incoming);
-        setAllChanges([]);
-        modelUpdate({ updated_data: [] });
-
-        let formatted = dataToRows(incoming, model.pivot, model.groups, model.value, model.id);
+        let formatted = dataToRows(model.data, model.pivot, model.groups, model.value, model.id);
 
         if (model.totals && formatted?.data?.length) {
             if (model.totals.row_total) { formatted = applyRow(formatted); }
@@ -91,54 +55,49 @@ const ExampleSpreadsheet = ({ triggerQuery, model, modelUpdate }) => {
         setFormattedData(formatted);
 
         if (formatted?.data?.length) {
-            try {
-                hf.clearSheet(sheetId); // prevent stale HF content
-            } catch (e) { /* ignore */ }
+            try { hf.clearSheet(sheetId); } catch (e) { }
             hf.setSheetContent(sheetId, formatted.data);
+
+            // Load into Handsontable if ref exists
+            if (hotRef.current) {
+                hotRef.current.loadData(formatted.data);
+            }
         }
 
-        // small delay to allow Handsontable load events to finish
-        setTimeout(() => {
-            loadingRef.current = false;
-        }, 0);
-    }
+        setTimeout(() => { loadingRef.current = false; }, 0);
+    };
 
     const afterChange = (changes, type) => {
-        if (type === 'loadData') return;
-        if (loadingRef.current) return; // ignore changes during refresh
         if (!changes?.length) return;
+        if (type === 'loadData' || loadingRef.current) return;
 
         const relevantTypes = ['edit','Autofill.fill','CopyPaste.cut','CopyPaste.paste'];
         if (!relevantTypes.includes(type)) return;
 
-        // Deduplicate by row:col keeping latest value
-        setAllChanges(prev => {
-            const map = {};
+        // Make a deep copy of formatted_data to avoid mutating state
+        const formattedCopy = JSON.parse(JSON.stringify(formatted_data));
 
-            prev.forEach(c => {
-                if (!c || c.length < 2) return;
-                const key = `${c[0]}:${c[1]}`;
-                map[key] = c;
-            });
-
-            changes.forEach(c => {
-                if (!c || c.length < 2) return;
-                const key = `${c[0]}:${c[1]}`;
-                map[key] = c;
-            });
-
-            return Object.values(map);
+        // Apply each change directly to the copy
+        changes.forEach(([row, col, oldVal, newVal]) => {
+            formattedCopy.data[row][col] = newVal;
+            // Also update HyperFormula for consistent totals
+            hf.setCellContents({ sheet: sheetId, row, col }, newVal);
         });
-    }
+
+        // Compute updated_data using helper
+        const updated_data = changesToData(
+            formattedCopy,
+            [], // no old changes, apply immediately
+            model.totals?.row_total || false
+        );
+
+        // Send to Retool
+        modelUpdate({ updated_data });
+    };
 
     const columnSummaryStyle = (row, col) => {
         if (!formatted_data) return {};
         let classNames = [];
-
-        if (all_changes?.length) {
-            const keySet = new Set(all_changes.map(c => `${c[0]}:${c[1]}`));
-            if (keySet.has(`${row}:${col}`)) return { className: 'changed_cell' };
-        }
 
         if (formatted_data.grand_total_row && row === formatted_data.grand_total_row) classNames.push('grand_total');
         if (formatted_data.row_total_column && col === formatted_data.row_total_column) classNames.push('row_total');
@@ -146,11 +105,12 @@ const ExampleSpreadsheet = ({ triggerQuery, model, modelUpdate }) => {
 
         if (classNames.length) return { className: classNames.join(' '), readOnly: true };
         return {};
-    }
+    };
 
     if (formatted_data?.data?.length) {
         return <div style={{height: '100vh', width: '100vw'}}>
             <HotTable
+                ref={hotRef}
                 columnSorting={Boolean(model.columnSorting)}
                 undoRedo={true}
                 contextMenu={Boolean(model.contextMenu)}
@@ -184,6 +144,6 @@ const ExampleSpreadsheet = ({ triggerQuery, model, modelUpdate }) => {
     } else {
         return <React.Fragment />;
     }
-}
+};
 
 export default ExampleSpreadsheet;
