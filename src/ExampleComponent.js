@@ -5,7 +5,6 @@ import { registerPlugin, AutoColumnSize, Autofill, ColumnSummary, ColumnSorting,
 import { HyperFormula } from 'hyperformula';
 import { applyGrand, applyRow, applySub, dataToRows } from './helpers';
 
-// Register plugins
 registerPlugin(AutoColumnSize);
 registerPlugin(Autofill);
 registerPlugin(ColumnSummary);
@@ -15,18 +14,15 @@ registerPlugin(ContextMenu);
 registerPlugin(DropdownMenu);
 registerPlugin(UndoRedo);
 
-// HyperFormula setup
 const hf = HyperFormula.buildEmpty({ licenseKey: 'internal-use-in-handsontable' });
 const sheetName = hf.addSheet("main");
 const sheetId = hf.getSheetId(sheetName);
 
-const ExampleSpreadsheetSingleCell = () => {
+const ExampleSpreadsheetSingleCellWithTimestamp = () => {
   const [formattedData, setFormattedData] = useState([]);
   const hotRef = useRef(null);
   const loadingRef = useRef(false);
   const modelRef = useRef(null);
-
-  // Track last edited cells for highlighting
   const lastEditsRef = useRef([]);
 
   const flushEditor = () => {
@@ -63,46 +59,40 @@ const ExampleSpreadsheetSingleCell = () => {
 
     flushEditor();
 
-    // Track last edits for highlighting
     lastEditsRef.current = changes.map(c => ({ row: c[0], col: c[1] }));
 
     const hotInstance = hotRef.current.hotInstance;
     const currentData = hotInstance.getData();
 
-    // Take only the last changed cell
     const [lastChange] = changes.slice(-1);
     const [rowIndex, colIndex, oldValue, newValue] = lastChange;
 
     const rowId = currentData[rowIndex][modelRef.current.fields.indexOf(modelRef.current.id)];
     const colName = formattedData.columns[colIndex];
 
-    // Build object for the changed cell only
     const changedCell = {
       [modelRef.current.id]: rowId,
       [colName]: newValue,
-      timestamp: new Date().toISOString() // optional timestamp
+      timestamp: new Date().toISOString()
     };
 
     if (window.parent) {
-      // Send only the current changed cell
-      window.parent.postMessage({ type: 'UPDATED_DATA', updated_data: [changedCell] }, '*');
+      window.parent.postMessage({
+        type: 'UPDATED_DATA',
+        updated_data: [changedCell]
+      }, '*');
     }
   };
 
-  // Highlight recently edited cells
   const columnSummaryStyle = (row, col) => {
     const classNames = [];
-
     if (formattedData.grand_total_row === row) classNames.push('grand_total');
     if (formattedData.row_total_column === col) classNames.push('row_total');
     if (formattedData.sub_total_rows?.includes(row)) classNames.push('sub_total');
-
     if (lastEditsRef.current.find(e => e.row === row && e.col === col)) classNames.push('dirty_cell');
-
     return classNames.length ? { className: classNames.join(' '), readOnly: false } : {};
   };
 
-  // Listen for model from parent
   useEffect(() => {
     const handler = (event) => {
       if (event.data?.type === 'SET_MODEL') {
@@ -148,4 +138,4 @@ const ExampleSpreadsheetSingleCell = () => {
   );
 };
 
-export default ExampleSpreadsheetSingleCell;
+export default ExampleSpreadsheetSingleCellWithTimestamp;
