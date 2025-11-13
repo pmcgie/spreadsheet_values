@@ -66,7 +66,7 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
     setTimeout(() => { loadingRef.current = false; }, 0);
   };
 
-  // --- Apply edits directly to HyperFormula & update Retool ---
+  // --- Apply edits and push exactly current HOT values to Retool ---
   const afterChange = (changes, type) => {
     if (!changes?.length) return;
     if (type === 'loadData' || loadingRef.current) return;
@@ -74,14 +74,21 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
     const relevantTypes = ['edit', 'Autofill.fill', 'CopyPaste.cut', 'CopyPaste.paste'];
     if (!relevantTypes.includes(type)) return;
 
-    // Apply changes directly into HyperFormula
-    changes.forEach(([row, col, oldVal, newVal]) => {
-      hf.setCellContents({ sheet: sheetId, row, col }, newVal);
+    const hotInstance = hotRef.current?.hotInstance;
+    if (!hotInstance) return;
+
+    // Get current values exactly as visible in HOT
+    const currentValues = hotInstance.getData();
+
+    // Update HyperFormula so formulas/totals recalc correctly
+    currentValues.forEach((rowData, row) => {
+      rowData.forEach((val, col) => {
+        hf.setCellContents({ sheet: sheetId, row, col }, val);
+      });
     });
 
-    // Read current sheet values from HyperFormula
-    const updated_data = hf.getSheetValues(sheetId);
-    modelUpdate({ updated_data });
+    // Push current visible table values to Retool
+    modelUpdate({ updated_data: currentValues });
   };
 
   // --- Cell styling for totals ---
