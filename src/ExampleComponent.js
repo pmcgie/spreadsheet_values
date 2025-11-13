@@ -6,6 +6,7 @@ import "handsontable/dist/handsontable.min.css";
 import { registerPlugin, AutoColumnSize, Autofill, ColumnSummary, ColumnSorting, ManualColumnFreeze, ContextMenu, DropdownMenu, UndoRedo } from 'handsontable/plugins';
 import { HyperFormula } from 'hyperformula';
 import { applyGrand, applyRow, applySub, dataToRows } from './helpers';
+import { debounce } from 'lodash';
 
 registerPlugin(AutoColumnSize);
 registerPlugin(Autofill);
@@ -16,26 +17,36 @@ registerPlugin(ContextMenu);
 registerPlugin(DropdownMenu);
 registerPlugin(UndoRedo);
 
+// HyperFormula instance
 const hf = HyperFormula.buildEmpty({ licenseKey: 'internal-use-in-handsontable' });
 const sheetName = hf.addSheet("main");
 const sheetId = hf.getSheetId(sheetName);
 
 const ExampleSpreadsheet = ({ model, modelUpdate }) => {
   const [formattedData, setFormattedData] = useState([]);
-  const [accumulatedChanges, setAccumulatedChanges] = useState({});
   const hotRef = useRef(null);
   const loadingRef = useRef(false);
+  const accumulatedChangesRef = useRef({});
 
+  // Debounced flush to batch rapid edits
+  const flushChangesDebounced = useRef(
+    debounce(() => {
+      modelUpdate({ updated_data: Object.values(accumulatedChangesRef.current) });
+    }, 50)
+  ).current;
+
+  // Initialize table when model.data changes
   useEffect(() => {
     if (model.data?.length) {
       initializeTable(model.data);
+      accumulatedChangesRef.current = {};
       modelUpdate({ updated_data: [] });
-      setAccumulatedChanges({});
     }
   }, [model.data]);
 
   const initializeTable = (data) => {
     loadingRef.current = true;
+
     let formatted = dataToRows(data, model.pivot, model.groups, model.value, model.id);
 
     if (model.totals && formatted?.data?.length) {
@@ -61,6 +72,7 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
     }
   };
 
+  // HOT callback: accumulate changes and batch them
   const afterChange = (changes, type) => {
     if (!changes?.length || type === 'loadData' || loadingRef.current) return;
     const relevantTypes = ['edit','Autofill.fill','CopyPaste.cut','CopyPaste.paste'];
@@ -71,28 +83,18 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
 
     flushEditor();
 
-    // Map each changed cell to its row object
-    const updatedRows = changes.map(([rowIndex, colIndex, oldValue, newValue]) => {
+    // Map each changed cell to the accumulatedChanges object
+    changes.forEach(([rowIndex, colIndex, oldValue, newValue]) => {
       const colName = formattedData.columns[colIndex];
-      const updatedRow = {};
+      const rowId = formattedData.data[rowIndex][model.id];
 
-      updatedRow[colName] = newValue;
-      updatedRow[model.id] = formattedData.data[rowIndex][model.id];
-
-      return updatedRow;
+      if (!accumulatedChangesRef.current[rowId]) accumulatedChangesRef.current[rowId] = {};
+      accumulatedChangesRef.current[rowId][colName] = newValue;
+      accumulatedChangesRef.current[rowId][model.id] = rowId;
     });
 
-    // Merge changes into accumulatedChanges
-    const newAccumulated = { ...accumulatedChanges };
-    updatedRows.forEach(row => {
-      if (!newAccumulated[row[model.id]]) newAccumulated[row[model.id]] = {};
-      newAccumulated[row[model.id]] = { ...newAccumulated[row[model.id]], ...row };
-    });
-
-    setAccumulatedChanges(newAccumulated);
-
-    // Convert accumulatedChanges object to array for updated_data
-    modelUpdate({ updated_data: Object.values(newAccumulated) });
+    // Flush via debounce (batch)
+    flushChangesDebounced();
   };
 
   const columnSummaryStyle = (row, col) => {
