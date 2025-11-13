@@ -63,13 +63,30 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
     }
   };
 
-  // Push current HOT data to Retool
-  const pushUpdatedData = () => {
+  // Map HOT rows back to object with unique IDs
+  const getUpdatedData = () => {
     flushEditor();
     const hotInstance = hotRef.current?.hotInstance;
-    if (!hotInstance) return;
-    const currentValues = hotInstance.getData(); // HOT is the source of truth
-    modelUpdate({ updated_data: currentValues });
+    if (!hotInstance || !formattedData?.data) return [];
+
+    return formattedData.data.map((rowObj, rowIndex) => {
+      const hotRow = hotInstance.getDataAtRow(rowIndex);
+      const newRow = {};
+      formattedData.columns.forEach((col, colIndex) => {
+        newRow[col] = hotRow[colIndex];
+      });
+
+      // Keep the unique ID intact
+      if (rowObj[model.id]) newRow[model.id] = rowObj[model.id];
+
+      return newRow;
+    });
+  };
+
+  // Push HOT values to Retool
+  const pushUpdatedData = () => {
+    const updatedData = getUpdatedData();
+    modelUpdate({ updated_data: updatedData });
   };
 
   // HOT callbacks
