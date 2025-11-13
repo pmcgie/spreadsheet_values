@@ -16,7 +16,7 @@ registerPlugin(ContextMenu);
 registerPlugin(DropdownMenu);
 registerPlugin(UndoRedo);
 
-// HyperFormula instance for display formulas/totals only
+// HyperFormula instance for formulas/totals only
 const hf = HyperFormula.buildEmpty({ licenseKey: 'internal-use-in-handsontable' });
 const sheetName = hf.addSheet("main");
 const sheetId = hf.getSheetId(sheetName);
@@ -37,7 +37,6 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
   const initializeTable = (data) => {
     loadingRef.current = true;
 
-    // Pivot/format data for HOT
     let formatted = dataToRows(data, model.pivot, model.groups, model.value, model.id);
 
     if (model.totals && formatted?.data?.length) {
@@ -49,30 +48,27 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
     setFormattedData(formatted);
 
     setTimeout(() => {
-      if (hotRef.current) {
-        hotRef.current.loadData(formatted.data);
-      }
+      if (hotRef.current) hotRef.current.loadData(formatted.data);
       try { hf.clearSheet(sheetId); } catch(e) {}
       hf.setSheetContent(sheetId, formatted.data);
       loadingRef.current = false;
     }, 0);
   };
 
-  // Commit editor value before reading HOT
+  // Commit any in-progress editor value before reading HOT
   const flushEditor = () => {
     const hotInstance = hotRef.current?.hotInstance;
-    if (hotInstance?.getActiveEditor && hotInstance.getActiveEditor()) {
-      const editor = hotInstance.getActiveEditor();
-      if (editor && editor.finishEditing) editor.finishEditing(false);
+    if (hotInstance?.getActiveEditor?.()) {
+      hotInstance.getActiveEditor().finishEditing(false);
     }
   };
 
-  // Push HOT values to Retool
+  // Push current HOT data to Retool
   const pushUpdatedData = () => {
     flushEditor();
     const hotInstance = hotRef.current?.hotInstance;
     if (!hotInstance) return;
-    const currentValues = hotInstance.getData(); // HOT values = truth
+    const currentValues = hotInstance.getData(); // HOT is the source of truth
     modelUpdate({ updated_data: currentValues });
   };
 
@@ -81,7 +77,6 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
     if (!changes?.length || type === 'loadData' || loadingRef.current) return;
     const relevantTypes = ['edit','Autofill.fill','CopyPaste.cut','CopyPaste.paste'];
     if (!relevantTypes.includes(type)) return;
-
     pushUpdatedData();
   };
 
