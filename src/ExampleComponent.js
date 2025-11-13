@@ -20,14 +20,14 @@ const hf = HyperFormula.buildEmpty({ licenseKey: 'internal-use-in-handsontable' 
 const sheetName = hf.addSheet("main");
 const sheetId = hf.getSheetId(sheetName);
 
-const ExampleSpreadsheetIframeUpdated = () => {
+const ExampleSpreadsheetIframeReliable = () => {
   const [formattedData, setFormattedData] = useState([]);
   const hotRef = useRef(null);
   const loadingRef = useRef(false);
   const modelRef = useRef(null);
 
-  // Track all user-edited cells
-  const userChangesRef = useRef({});
+  // Track last edited cells for highlighting
+  const lastEditsRef = useRef([]);
 
   // Flush editor to ensure last value is captured
   const flushEditor = () => {
@@ -58,7 +58,9 @@ const ExampleSpreadsheetIframeUpdated = () => {
     }, 0);
   };
 
-  // AfterChange: report last cell and update all edited cells
+  // Debounced afterChange: update all current data
+  const debouncedRef = useRef(null);
+
   const afterChange = (changes, type) => {
     if (!changes?.length || type === 'loadData' || loadingRef.current) return;
     const relevantTypes = ['edit','Autofill.fill','CopyPaste.cut','CopyPaste.paste'];
@@ -66,28 +68,41 @@ const ExampleSpreadsheetIframeUpdated = () => {
 
     flushEditor();
 
-    // Only the last change
-    const [lastChange] = [changes[changes.length - 1]];
-    const [rowIndex, colIndex, oldValue, newValue] = lastChange;
+    // Track last edits for highlighting
+    lastEditsRef.current = changes.map(c => ({ row: c[0], col: c[1] }));
 
-    const colName = formattedData.columns[colIndex];
-    const rowId = formattedData.data[rowIndex][modelRef.current.id];
+    if (debouncedRef.current) clearTimeout(debouncedRef.current);
+    debouncedRef.current = setTimeout(() => {
+      const hotInstance = hotRef.current.hotInstance;
+      const currentData = hotInstance.getData();
 
-    // Update tracking
-    if (!userChangesRef.current[rowId]) userChangesRef.current[rowId] = {};
-    userChangesRef.current[rowId][colName] = newValue;
-    userChangesRef.current[rowId][modelRef.current.id] = rowId;
+      // Build updated_data array from current Handsontable content
+      const updatedData = currentData.map((row, rIndex) => {
+        const rowId = row[modelRef.current.fields.indexOf(modelRef.current.id)];
+        return modelRef.current.columns.reduce((acc, colName, cIndex) => {
+          acc[colName] = row[cIndex];
+          acc[modelRef.current.id] = rowId;
+          return acc;
+        }, {});
+      });
 
-    const lastChangedCell = { [modelRef.current.id]: rowId, [colName]: newValue };
-    const allUpdatedData = Object.values(userChangesRef.current);
+      // Send entire current data to parent
+      if (window.parent) {
+        window.parent.postMessage({ type: 'UPDATED_DATA', updated_data: updatedData }, '*');
 
-    if (window.parent) {
-      window.parent.postMessage({ type: 'CELL_CHANGED', cell: lastChangedCell }, '*');
-      window.parent.postMessage({ type: 'UPDATED_DATA', updated_data: allUpdatedData }, '*');
-    }
+        // Optionally send only the last changed cell
+        const [lastChange] = changes.slice(-1);
+        const [rowIndex, colIndex, oldValue, newValue] = lastChange;
+        const lastChangedCell = {
+          [modelRef.current.id]: currentData[rowIndex][modelRef.current.fields.indexOf(modelRef.current.id)],
+          [modelRef.current.columns[colIndex]]: newValue
+        };
+        window.parent.postMessage({ type: 'CELL_CHANGED', cell: lastChangedCell }, '*');
+      }
+    }, 150); // 150ms debounce
   };
 
-  // Highlight user-edited cells
+  // Highlight recently edited cells
   const columnSummaryStyle = (row, col) => {
     const classNames = [];
 
@@ -95,9 +110,7 @@ const ExampleSpreadsheetIframeUpdated = () => {
     if (formattedData.row_total_column === col) classNames.push('row_total');
     if (formattedData.sub_total_rows?.includes(row)) classNames.push('sub_total');
 
-    const rowId = formattedData.data?.[row]?.[modelRef.current.id];
-    const colName = formattedData.columns[col];
-    if (rowId && userChangesRef.current[rowId]?.[colName] !== undefined) classNames.push('dirty_cell');
+    if (lastEditsRef.current.find(e => e.row === row && e.col === col)) classNames.push('dirty_cell');
 
     return classNames.length ? { className: classNames.join(' '), readOnly: false } : {};
   };
@@ -107,7 +120,7 @@ const ExampleSpreadsheetIframeUpdated = () => {
     const handler = (event) => {
       if (event.data?.type === 'SET_MODEL') {
         initializeTable(event.data.model);
-        userChangesRef.current = {};
+        lastEditsRef.current = [];
       }
     };
     window.addEventListener('message', handler);
@@ -148,4 +161,4 @@ const ExampleSpreadsheetIframeUpdated = () => {
   );
 };
 
-export default ExampleSpreadsheetIframeUpdated;
+export default ExampleSpreadsheetIframeReliable;
