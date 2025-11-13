@@ -6,6 +6,7 @@ import "handsontable/dist/handsontable.min.css";
 import { registerPlugin, AutoColumnSize, Autofill, ColumnSummary, ColumnSorting, ManualColumnFreeze, ContextMenu, DropdownMenu, UndoRedo } from 'handsontable/plugins';
 import { HyperFormula } from 'hyperformula';
 import { applyGrand, applyRow, applySub, dataToRows } from './helpers';
+import { debounce } from 'lodash';
 
 // Register plugins
 registerPlugin(AutoColumnSize);
@@ -27,6 +28,17 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
   const hotRef = useRef(null);
   const loadingRef = useRef(false);
   const accumulatedChangesRef = useRef({}); // user-edited cells
+
+  // Debounced auto-commit (batch rapid edits)
+  const autoCommit = useRef(
+    debounce(() => {
+      if (Object.keys(accumulatedChangesRef.current).length > 0) {
+        modelUpdate({ updated_data: Object.values(accumulatedChangesRef.current) });
+        // optionally clear changes after commit
+        // accumulatedChangesRef.current = {};
+      }
+    }, 150)
+  ).current;
 
   // Initialize table when model.data changes
   useEffect(() => {
@@ -64,7 +76,7 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
     if (hotInstance?.getActiveEditor?.()) hotInstance.getActiveEditor().finishEditing(false);
   };
 
-  // AfterChange handler: accumulate user changes
+  // AfterChange: mark dirty cells & auto-commit
   const afterChange = (changes, type) => {
     if (!changes?.length || type === 'loadData' || loadingRef.current) return;
     const relevantTypes = ['edit','Autofill.fill','CopyPaste.cut','CopyPaste.paste'];
@@ -84,33 +96,8 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
       accumulatedChangesRef.current[rowId][model.id] = rowId;
     });
 
-    // Immediately update latest cell in model.updated_data if desired
-    // modelUpdate({ updated_data: Object.values(accumulatedChangesRef.current) });
-  };
-
-  // Commit all accumulated changes manually
-  const commitChanges = () => {
-    modelUpdate({ updated_data: Object.values(accumulatedChangesRef.current) });
-    accumulatedChangesRef.current = {};
-  };
-
-  // Apply HyperFormula/totals without overwriting user changes
-  const applyFormulaValuesSafely = (hotData) => {
-    return hotData.map((row, rowIndex) => {
-      const rowId = row[model.id];
-      const newRow = [...row];
-
-      formattedData.columns.forEach((colName, colIndex) => {
-        // Only overwrite if user hasn't changed this cell
-        if (!accumulatedChangesRef.current[rowId]?.[colName]) {
-          try {
-            const hfValue = hf.getCellValue(sheetId, rowIndex, colIndex);
-            if (hfValue !== undefined) newRow[colIndex] = hfValue;
-          } catch (e) {}
-        }
-      });
-      return newRow;
-    });
+    // Auto-commit after debounce
+    autoCommit();
   };
 
   // Highlight dirty cells
@@ -134,13 +121,6 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
 
   return (
     <div style={{ height: '100vh', width: '100vw', position: 'relative' }}>
-      <button
-        onClick={commitChanges}
-        style={{ position: 'absolute', top: 10, right: 10, zIndex: 1000 }}
-      >
-        Commit Changes
-      </button>
-
       <HotTable
         ref={hotRef}
         data={formattedData.data}
