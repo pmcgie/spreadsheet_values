@@ -63,7 +63,7 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
     }
   };
 
-  // HOT callback: report only changed rows
+  // HOT callback: report only the changed cells
   const afterChange = (changes, type) => {
     if (!changes?.length || type === 'loadData' || loadingRef.current) return;
     const relevantTypes = ['edit','Autofill.fill','CopyPaste.cut','CopyPaste.paste'];
@@ -74,25 +74,23 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
 
     flushEditor();
 
-    // Map each changed row to an object
+    // Map each changed cell to its row object
     const updatedRows = changes.map(([rowIndex, colIndex, oldValue, newValue]) => {
-      const hotRow = hotInstance.getDataAtRow(rowIndex);
+      const colName = formattedData.columns[colIndex];
       const updatedRow = {};
-      formattedData.columns.forEach((col, idx) => {
-        updatedRow[col] = hotRow[idx];
-      });
 
-      // Preserve the unique ID
-      if (formattedData.data[rowIndex][model.id]) {
-        updatedRow[model.id] = formattedData.data[rowIndex][model.id];
-      }
+      // Only include the changed column
+      updatedRow[colName] = newValue;
+
+      // Preserve the row's unique ID
+      updatedRow[model.id] = formattedData.data[rowIndex][model.id];
 
       return updatedRow;
     });
 
-    // Remove duplicates in case multiple cells in the same row were edited
+    // Merge changes per row in case multiple cells in the same row were changed
     const uniqueUpdatedRows = Object.values(updatedRows.reduce((acc, row) => {
-      acc[row[model.id]] = row;
+      acc[row[model.id]] = { ...(acc[row[model.id]] || {}), ...row };
       return acc;
     }, {}));
 
@@ -100,7 +98,7 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
   };
 
   const afterSelectionEnd = () => {
-    // Optional: can report full table or ignore selection changes
+    // No-op or optional: can push full data if needed
   };
 
   // Optional: refresh with latest external data safely
