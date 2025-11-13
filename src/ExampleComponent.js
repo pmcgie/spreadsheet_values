@@ -63,42 +63,44 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
     }
   };
 
-  // Map HOT rows back to object with unique IDs
-  const getUpdatedData = () => {
-    flushEditor();
-    const hotInstance = hotRef.current?.hotInstance;
-    if (!hotInstance || !formattedData?.data) return [];
-
-    return formattedData.data.map((rowObj, rowIndex) => {
-      const hotRow = hotInstance.getDataAtRow(rowIndex);
-      const newRow = {};
-      formattedData.columns.forEach((col, colIndex) => {
-        newRow[col] = hotRow[colIndex];
-      });
-
-      // Keep the unique ID intact
-      if (rowObj[model.id]) newRow[model.id] = rowObj[model.id];
-
-      return newRow;
-    });
-  };
-
-  // Push HOT values to Retool
-  const pushUpdatedData = () => {
-    const updatedData = getUpdatedData();
-    modelUpdate({ updated_data: updatedData });
-  };
-
-  // HOT callbacks
+  // HOT callback: report only changed rows
   const afterChange = (changes, type) => {
     if (!changes?.length || type === 'loadData' || loadingRef.current) return;
     const relevantTypes = ['edit','Autofill.fill','CopyPaste.cut','CopyPaste.paste'];
     if (!relevantTypes.includes(type)) return;
-    pushUpdatedData();
+
+    const hotInstance = hotRef.current?.hotInstance;
+    if (!hotInstance || !formattedData?.data) return;
+
+    flushEditor();
+
+    // Map each changed row to an object
+    const updatedRows = changes.map(([rowIndex, colIndex, oldValue, newValue]) => {
+      const hotRow = hotInstance.getDataAtRow(rowIndex);
+      const updatedRow = {};
+      formattedData.columns.forEach((col, idx) => {
+        updatedRow[col] = hotRow[idx];
+      });
+
+      // Preserve the unique ID
+      if (formattedData.data[rowIndex][model.id]) {
+        updatedRow[model.id] = formattedData.data[rowIndex][model.id];
+      }
+
+      return updatedRow;
+    });
+
+    // Remove duplicates in case multiple cells in the same row were edited
+    const uniqueUpdatedRows = Object.values(updatedRows.reduce((acc, row) => {
+      acc[row[model.id]] = row;
+      return acc;
+    }, {}));
+
+    modelUpdate({ updated_data: uniqueUpdatedRows });
   };
 
   const afterSelectionEnd = () => {
-    pushUpdatedData();
+    // Optional: can report full table or ignore selection changes
   };
 
   // Optional: refresh with latest external data safely
