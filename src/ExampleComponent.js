@@ -27,15 +27,15 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
   const [formattedData, setFormattedData] = useState([]);
   const hotRef = useRef(null);
   const loadingRef = useRef(false);
-  const accumulatedChangesRef = useRef({}); // user-edited cells
+
+  // Track all user-edited cells
+  const userChangesRef = useRef({});
 
   // Debounced auto-commit (batch rapid edits)
   const autoCommit = useRef(
     debounce(() => {
-      if (Object.keys(accumulatedChangesRef.current).length > 0) {
-        modelUpdate({ updated_data: Object.values(accumulatedChangesRef.current) });
-        // optionally clear changes after commit
-        // accumulatedChangesRef.current = {};
+      if (Object.keys(userChangesRef.current).length > 0) {
+        modelUpdate({ updated_data: Object.values(userChangesRef.current) });
       }
     }, 150)
   ).current;
@@ -44,7 +44,7 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
   useEffect(() => {
     if (model.data?.length) {
       initializeTable(model.data);
-      accumulatedChangesRef.current = {};
+      userChangesRef.current = {};
       modelUpdate({ updated_data: [] });
     }
   }, [model.data]);
@@ -64,7 +64,7 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
 
     setTimeout(() => {
       if (hotRef.current) hotRef.current.loadData(formatted.data);
-      try { hf.clearSheet(sheetId); } catch(e) {}
+      try { hf.clearSheet(sheetId); } catch (e) {}
       hf.setSheetContent(sheetId, formatted.data);
       loadingRef.current = false;
     }, 0);
@@ -76,14 +76,11 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
     if (hotInstance?.getActiveEditor?.()) hotInstance.getActiveEditor().finishEditing(false);
   };
 
-  // AfterChange: mark dirty cells & auto-commit
+  // AfterChange: mark dirty cells and debounce commit
   const afterChange = (changes, type) => {
     if (!changes?.length || type === 'loadData' || loadingRef.current) return;
     const relevantTypes = ['edit','Autofill.fill','CopyPaste.cut','CopyPaste.paste'];
     if (!relevantTypes.includes(type)) return;
-
-    const hotInstance = hotRef.current?.hotInstance;
-    if (!hotInstance || !formattedData?.data) return;
 
     flushEditor();
 
@@ -91,16 +88,36 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
       const colName = formattedData.columns[colIndex];
       const rowId = formattedData.data[rowIndex][model.id];
 
-      if (!accumulatedChangesRef.current[rowId]) accumulatedChangesRef.current[rowId] = {};
-      accumulatedChangesRef.current[rowId][colName] = newValue;
-      accumulatedChangesRef.current[rowId][model.id] = rowId;
+      if (!userChangesRef.current[rowId]) userChangesRef.current[rowId] = {};
+      userChangesRef.current[rowId][colName] = newValue;
+      userChangesRef.current[rowId][model.id] = rowId;
     });
 
-    // Auto-commit after debounce
+    // Auto-commit changes after debounce
     autoCommit();
   };
 
-  // Highlight dirty cells
+  // Safely apply formulas/totals without overwriting user-edited cells
+  const applyFormulasSafely = (hotData) => {
+    return hotData.map((row, rowIndex) => {
+      const rowId = row[model.id];
+      const newRow = [...row];
+
+      formattedData.columns.forEach((colName, colIndex) => {
+        // Only overwrite if user hasn't edited this cell
+        if (!userChangesRef.current[rowId]?.[colName]) {
+          try {
+            const hfValue = hf.getCellValue(sheetId, rowIndex, colIndex);
+            if (hfValue !== undefined) newRow[colIndex] = hfValue;
+          } catch (e) {}
+        }
+      });
+
+      return newRow;
+    });
+  };
+
+  // Highlight dirty/user-edited cells
   const columnSummaryStyle = (row, col) => {
     const classNames = [];
 
@@ -110,7 +127,7 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
 
     const rowId = formattedData.data?.[row]?.[model.id];
     const colName = formattedData.columns[col];
-    if (rowId && accumulatedChangesRef.current[rowId]?.[colName] !== undefined) {
+    if (rowId && userChangesRef.current[rowId]?.[colName] !== undefined) {
       classNames.push('dirty_cell');
     }
 
