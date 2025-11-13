@@ -20,7 +20,7 @@ const hf = HyperFormula.buildEmpty({ licenseKey: 'internal-use-in-handsontable' 
 const sheetName = hf.addSheet("main");
 const sheetId = hf.getSheetId(sheetName);
 
-const ExampleSpreadsheetIframeWithTimestamp = () => {
+const ExampleSpreadsheetSingleCell = () => {
   const [formattedData, setFormattedData] = useState([]);
   const hotRef = useRef(null);
   const loadingRef = useRef(false);
@@ -28,9 +28,6 @@ const ExampleSpreadsheetIframeWithTimestamp = () => {
 
   // Track last edited cells for highlighting
   const lastEditsRef = useRef([]);
-
-  // Temporary store for all updated cells with timestamp
-  const tempStoreRef = useRef({});
 
   const flushEditor = () => {
     const hotInstance = hotRef.current?.hotInstance;
@@ -59,8 +56,6 @@ const ExampleSpreadsheetIframeWithTimestamp = () => {
     }, 0);
   };
 
-  // Debounced afterChange
-  const debouncedRef = useRef(null);
   const afterChange = (changes, type) => {
     if (!changes?.length || type === 'loadData' || loadingRef.current) return;
     const relevantTypes = ['edit','Autofill.fill','CopyPaste.cut','CopyPaste.paste'];
@@ -71,41 +66,27 @@ const ExampleSpreadsheetIframeWithTimestamp = () => {
     // Track last edits for highlighting
     lastEditsRef.current = changes.map(c => ({ row: c[0], col: c[1] }));
 
-    if (debouncedRef.current) clearTimeout(debouncedRef.current);
-    debouncedRef.current = setTimeout(() => {
-      const hotInstance = hotRef.current.hotInstance;
-      const currentData = hotInstance.getData();
+    const hotInstance = hotRef.current.hotInstance;
+    const currentData = hotInstance.getData();
 
-      // Update temp store with timestamp
-      changes.forEach(([rowIndex, colIndex, oldValue, newValue]) => {
-        const rowId = currentData[rowIndex][modelRef.current.fields.indexOf(modelRef.current.id)];
-        const colName = formattedData.columns[colIndex];
+    // Take only the last changed cell
+    const [lastChange] = changes.slice(-1);
+    const [rowIndex, colIndex, oldValue, newValue] = lastChange;
 
-        if (!tempStoreRef.current[rowId]) tempStoreRef.current[rowId] = {};
-        tempStoreRef.current[rowId][colName] = {
-          value: newValue,
-          timestamp: new Date().toISOString()
-        };
-        tempStoreRef.current[rowId][modelRef.current.id] = rowId;
-      });
+    const rowId = currentData[rowIndex][modelRef.current.fields.indexOf(modelRef.current.id)];
+    const colName = formattedData.columns[colIndex];
 
-      const updatedData = Object.values(tempStoreRef.current);
+    // Build object for the changed cell only
+    const changedCell = {
+      [modelRef.current.id]: rowId,
+      [colName]: newValue,
+      timestamp: new Date().toISOString() // optional timestamp
+    };
 
-      if (window.parent) {
-        // Send all edited cells with timestamp
-        window.parent.postMessage({ type: 'UPDATED_DATA', updated_data: updatedData }, '*');
-
-        // Send last changed cell
-        const [lastChange] = changes.slice(-1);
-        const [rowIndex, colIndex, oldValue, newValue] = lastChange;
-        const lastChangedCell = {
-          [modelRef.current.id]: currentData[rowIndex][modelRef.current.fields.indexOf(modelRef.current.id)],
-          [formattedData.columns[colIndex]]: newValue,
-          timestamp: new Date().toISOString()
-        };
-        window.parent.postMessage({ type: 'CELL_CHANGED', cell: lastChangedCell }, '*');
-      }
-    }, 150); // debounce 150ms
+    if (window.parent) {
+      // Send only the current changed cell
+      window.parent.postMessage({ type: 'UPDATED_DATA', updated_data: [changedCell] }, '*');
+    }
   };
 
   // Highlight recently edited cells
@@ -127,7 +108,6 @@ const ExampleSpreadsheetIframeWithTimestamp = () => {
       if (event.data?.type === 'SET_MODEL') {
         initializeTable(event.data.model);
         lastEditsRef.current = [];
-        tempStoreRef.current = {}; // reset temp store when model changes
       }
     };
     window.addEventListener('message', handler);
@@ -168,4 +148,4 @@ const ExampleSpreadsheetIframeWithTimestamp = () => {
   );
 };
 
-export default ExampleSpreadsheetIframeWithTimestamp;
+export default ExampleSpreadsheetSingleCell;
