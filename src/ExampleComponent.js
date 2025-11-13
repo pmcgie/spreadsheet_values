@@ -6,7 +6,6 @@ import "handsontable/dist/handsontable.min.css";
 import { registerPlugin, AutoColumnSize, Autofill, ColumnSummary, ColumnSorting, ManualColumnFreeze, ContextMenu, DropdownMenu, UndoRedo } from 'handsontable/plugins';
 import { HyperFormula } from 'hyperformula';
 import { applyGrand, applyRow, applySub, dataToRows } from './helpers';
-import { debounce } from 'lodash';
 
 registerPlugin(AutoColumnSize);
 registerPlugin(Autofill);
@@ -24,23 +23,15 @@ const sheetId = hf.getSheetId(sheetName);
 
 const ExampleSpreadsheet = ({ model, modelUpdate }) => {
   const [formattedData, setFormattedData] = useState([]);
+  const [dirtyCells, setDirtyCells] = useState({});
   const hotRef = useRef(null);
   const loadingRef = useRef(false);
-  const accumulatedChangesRef = useRef({});
-
-  // Debounced flush to batch rapid edits
-  const flushChangesDebounced = useRef(
-    debounce(() => {
-      modelUpdate({ updated_data: Object.values(accumulatedChangesRef.current) });
-    }, 50)
-  ).current;
 
   // Initialize table when model.data changes
   useEffect(() => {
     if (model.data?.length) {
       initializeTable(model.data);
-      accumulatedChangesRef.current = {};
-      modelUpdate({ updated_data: [] });
+      setDirtyCells({});
     }
   }, [model.data]);
 
@@ -72,7 +63,7 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
     }
   };
 
-  // HOT callback: accumulate changes and batch them
+  // HOT callback: mark dirty cells but do not commit yet
   const afterChange = (changes, type) => {
     if (!changes?.length || type === 'loadData' || loadingRef.current) return;
     const relevantTypes = ['edit','Autofill.fill','CopyPaste.cut','CopyPaste.paste'];
@@ -83,34 +74,50 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
 
     flushEditor();
 
-    // Map each changed cell to the accumulatedChanges object
-    changes.forEach(([rowIndex, colIndex, oldValue, newValue]) => {
-      const colName = formattedData.columns[colIndex];
-      const rowId = formattedData.data[rowIndex][model.id];
-
-      if (!accumulatedChangesRef.current[rowId]) accumulatedChangesRef.current[rowId] = {};
-      accumulatedChangesRef.current[rowId][colName] = newValue;
-      accumulatedChangesRef.current[rowId][model.id] = rowId;
+    setDirtyCells(prev => {
+      const next = { ...prev };
+      changes.forEach(([rowIndex, colIndex, oldValue, newValue]) => {
+        const colName = formattedData.columns[colIndex];
+        const rowId = formattedData.data[rowIndex][model.id];
+        if (!next[rowId]) next[rowId] = {};
+        next[rowId][colName] = newValue;
+        next[rowId][model.id] = rowId;
+      });
+      return next;
     });
-
-    // Flush via debounce (batch)
-    flushChangesDebounced();
   };
 
+  // Commit all dirty cells to model.updated_data
+  const commitChanges = () => {
+    modelUpdate({ updated_data: Object.values(dirtyCells) });
+    setDirtyCells({});
+  };
+
+  // Highlight dirty cells
   const columnSummaryStyle = (row, col) => {
-    if (!formattedData) return {};
     const classNames = [];
+
     if (formattedData.grand_total_row === row) classNames.push('grand_total');
     if (formattedData.row_total_column === col) classNames.push('row_total');
     if (formattedData.sub_total_rows?.includes(row)) classNames.push('sub_total');
-    if (classNames.length) return { className: classNames.join(' '), readOnly: true };
-    return {};
+
+    const rowId = formattedData.data?.[row]?.[model.id];
+    const colName = formattedData.columns[col];
+    if (rowId && dirtyCells[rowId]?.[colName] !== undefined) classNames.push('dirty_cell');
+
+    return classNames.length ? { className: classNames.join(' '), readOnly: false } : {};
   };
 
   if (!formattedData?.data?.length) return <></>;
 
   return (
     <div style={{ height: '100vh', width: '100vw' }}>
+      <button
+        onClick={commitChanges}
+        style={{ position: 'absolute', zIndex: 1000, top: 10, right: 10 }}
+      >
+        Commit Changes
+      </button>
       <HotTable
         ref={hotRef}
         data={formattedData.data}
