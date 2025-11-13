@@ -18,21 +18,13 @@ const hf = HyperFormula.buildEmpty({ licenseKey: 'internal-use-in-handsontable' 
 const sheetName = hf.addSheet("main");
 const sheetId = hf.getSheetId(sheetName);
 
-const ExampleSpreadsheetSingleCellWithTimestamp = () => {
+const ExampleSpreadsheetSingleCell = () => {
   const [formattedData, setFormattedData] = useState([]);
   const hotRef = useRef(null);
-  const loadingRef = useRef(false);
   const modelRef = useRef(null);
-  const lastEditsRef = useRef([]);
-
-  const flushEditor = () => {
-    const hotInstance = hotRef.current?.hotInstance;
-    if (hotInstance?.getActiveEditor?.()) hotInstance.getActiveEditor().finishEditing(false);
-  };
 
   const initializeTable = (model) => {
     modelRef.current = model;
-    loadingRef.current = true;
 
     let formatted = dataToRows(model.data, model.pivot, model.groups, model.value, model.id);
 
@@ -46,29 +38,21 @@ const ExampleSpreadsheetSingleCellWithTimestamp = () => {
 
     setTimeout(() => {
       if (hotRef.current) hotRef.current.loadData(formatted.data);
-      try { hf.clearSheet(sheetId); } catch(e) {}
+      hf.clearSheet(sheetId);
       hf.setSheetContent(sheetId, formatted.data);
-      loadingRef.current = false;
     }, 0);
   };
 
   const afterChange = (changes, type) => {
-    if (!changes?.length || type === 'loadData' || loadingRef.current) return;
+    if (!changes?.length || type === 'loadData') return;
+
     const relevantTypes = ['edit','Autofill.fill','CopyPaste.cut','CopyPaste.paste'];
     if (!relevantTypes.includes(type)) return;
 
-    flushEditor();
-
-    lastEditsRef.current = changes.map(c => ({ row: c[0], col: c[1] }));
-
+    const [row, col, oldValue, newValue] = changes[changes.length - 1];
     const hotInstance = hotRef.current.hotInstance;
-    const currentData = hotInstance.getData();
-
-    const [lastChange] = changes.slice(-1);
-    const [rowIndex, colIndex, oldValue, newValue] = lastChange;
-
-    const rowId = currentData[rowIndex][modelRef.current.fields.indexOf(modelRef.current.id)];
-    const colName = formattedData.columns[colIndex];
+    const rowId = hotInstance.getDataAtCell(row, modelRef.current.fields.indexOf(modelRef.current.id));
+    const colName = formattedData.columns[col];
 
     const changedCell = {
       [modelRef.current.id]: rowId,
@@ -76,6 +60,7 @@ const ExampleSpreadsheetSingleCellWithTimestamp = () => {
       timestamp: new Date().toISOString()
     };
 
+    // Send to Retool
     if (window.parent) {
       window.parent.postMessage({
         type: 'UPDATED_DATA',
@@ -89,16 +74,12 @@ const ExampleSpreadsheetSingleCellWithTimestamp = () => {
     if (formattedData.grand_total_row === row) classNames.push('grand_total');
     if (formattedData.row_total_column === col) classNames.push('row_total');
     if (formattedData.sub_total_rows?.includes(row)) classNames.push('sub_total');
-    if (lastEditsRef.current.find(e => e.row === row && e.col === col)) classNames.push('dirty_cell');
     return classNames.length ? { className: classNames.join(' '), readOnly: false } : {};
   };
 
   useEffect(() => {
     const handler = (event) => {
-      if (event.data?.type === 'SET_MODEL') {
-        initializeTable(event.data.model);
-        lastEditsRef.current = [];
-      }
+      if (event.data?.type === 'SET_MODEL') initializeTable(event.data.model);
     };
     window.addEventListener('message', handler);
     return () => window.removeEventListener('message', handler);
@@ -115,7 +96,7 @@ const ExampleSpreadsheetSingleCellWithTimestamp = () => {
       undoRedo={true}
       contextMenu={Boolean(modelRef.current?.contextMenu)}
       manualColumnFreeze={modelRef.current?.fixedColumnsLeft && Number(modelRef.current.fixedColumnsLeft) > 0}
-      fixedColumnsLeft={modelRef.current?.fixedColumnsLeft && Number(modelRef.current.fixedColumnsLeft) > 0 ? modelRef.current.fixedColumnsLeft : 0}
+      fixedColumnsLeft={modelRef.current?.fixedColumnsLeft || 0}
       colWidths={modelRef.current?.colWidths}
       fillHandle={{ autoInsertRow: false, autoInsertColumn: false }}
       allowInsertRow={false}
@@ -129,8 +110,8 @@ const ExampleSpreadsheetSingleCellWithTimestamp = () => {
           <HotColumn
             key={c}
             data={i}
-            readOnly={modelRef.current?.groups?.indexOf(c) > -1}
-            type={modelRef.current?.groups?.indexOf(c) > -1 ? 'numeric' : 'text'}
+            readOnly={modelRef.current?.groups?.includes(c)}
+            type={modelRef.current?.groups?.includes(c) ? 'numeric' : 'text'}
           />
         ) : <React.Fragment key={c} />
       )}
@@ -138,4 +119,4 @@ const ExampleSpreadsheetSingleCellWithTimestamp = () => {
   );
 };
 
-export default ExampleSpreadsheetSingleCellWithTimestamp;
+export default ExampleSpreadsheetSingleCell;
