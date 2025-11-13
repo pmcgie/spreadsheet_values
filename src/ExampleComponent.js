@@ -14,17 +14,15 @@ registerPlugin(ContextMenu);
 registerPlugin(DropdownMenu);
 registerPlugin(UndoRedo);
 
-// HyperFormula instance
 const hf = HyperFormula.buildEmpty({ licenseKey: 'internal-use-in-handsontable' });
 const sheetName = hf.addSheet("main");
 const sheetId = hf.getSheetId(sheetName);
 
-const ExampleSpreadsheetBulkAware = ({ model }) => {
+const ExampleSpreadsheetFixed = ({ model }) => {
   const hotRef = useRef(null);
   const [formattedData, setFormattedData] = useState([]);
   const modelRef = useRef(model);
 
-  // Initialize / refresh Handsontable data
   const initializeTable = () => {
     modelRef.current = model;
     let formatted = dataToRows(model.data, model.pivot, model.groups, model.value, model.id);
@@ -44,59 +42,48 @@ const ExampleSpreadsheetBulkAware = ({ model }) => {
     }, 0);
   };
 
-  // afterChange handler: single vs bulk edits
   const afterChange = (changes, type) => {
-    if (!changes?.length || type === 'loadData') return;
-
-    const hotInstance = hotRef.current.hotInstance;
+    if (!changes?.length) return;
+    const hot = hotRef.current.hotInstance;
     const { id: fieldId, value: valueField, groups } = modelRef.current;
-    let updated_cells = [];
 
-    const bulkTypes = ['Autofill.fill', 'CopyPaste.paste', 'CopyPaste.cut'];
-    if (bulkTypes.includes(type)) {
-      // Bulk update → send all changed cells
-      changes.forEach(([row, col, oldVal, newVal]) => {
-        const rowData = hotInstance.getDataAtRow(row);
-        const id_index = col - groups.length;
-        const data_id = JSON.parse(rowData[rowData.length - 1])[id_index];
-        updated_cells.push({
-          [fieldId]: data_id,
-          [valueField]: Number(newVal),
-          timestamp: new Date().toISOString()
-        });
-      });
-    } else {
-      // Single cell → only last changed cell
-      const [row, col, oldVal, newVal] = changes[changes.length - 1];
-      const rowData = hotInstance.getDataAtRow(row);
-      const id_index = col - groups.length;
-      const data_id = JSON.parse(rowData[rowData.length - 1])[id_index];
-      updated_cells.push({
-        [fieldId]: data_id,
-        [valueField]: Number(newVal),
-        timestamp: new Date().toISOString()
-      });
-    }
+    // Only track true user edits, ignore formula recalcs
+    if (type !== 'edit') return;
 
-    // Send updated data to Retool parent / iframe
-    if (window.parent) {
-      window.parent.postMessage({
-        type: 'UPDATED_DATA',
-        updated_data: updated_cells
-      }, '*');
-    }
+    const [row, col, oldVal, newVal] = changes[changes.length - 1];
+
+    // Ignore totals/subtotals/grand totals
+    if (
+      formattedData.row_total_column === col ||
+      formattedData.grand_total_row === row ||
+      formattedData.sub_total_rows?.includes(row)
+    ) return;
+
+    const rowData = hot.getDataAtRow(row);
+    const id_index = col - groups.length;
+    const data_id = JSON.parse(rowData[rowData.length - 1])[id_index];
+
+    const updatedCell = {
+      [fieldId]: data_id,
+      [valueField]: Number(newVal),
+      timestamp: new Date().toISOString()
+    };
+
+    // Send updated data
+    window.parent.postMessage({
+      type: 'UPDATED_DATA',
+      updated_data: [updatedCell]
+    }, '*');
   };
 
-  // Styling for totals/subtotals
   const columnSummaryStyle = (row, col) => {
     const classNames = [];
     if (formattedData.grand_total_row === row) classNames.push('grand_total');
     if (formattedData.row_total_column === col) classNames.push('row_total');
     if (formattedData.sub_total_rows?.includes(row)) classNames.push('sub_total');
-    return classNames.length ? { className: classNames.join(' '), readOnly: false } : {};
+    return classNames.length ? { className: classNames.join(' '), readOnly: classNames.includes('grand_total') || classNames.includes('row_total') || classNames.includes('sub_total') } : {};
   };
 
-  // Refresh table on model changes
   useEffect(() => {
     initializeTable();
   }, [model]);
@@ -137,4 +124,4 @@ const ExampleSpreadsheetBulkAware = ({ model }) => {
   );
 };
 
-export default ExampleSpreadsheetBulkAware;
+export default ExampleSpreadsheetFixed;
