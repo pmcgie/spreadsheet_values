@@ -2,29 +2,36 @@ import React, { useEffect, useRef, useState } from "react";
 import { HotTable, HotColumn } from "@handsontable/react";
 import Handsontable from "handsontable";
 import "handsontable/dist/handsontable.full.min.css";
-import { registerPlugin, AutoColumnSize, ContextMenu, DropdownMenu, UndoRedo } from "handsontable/plugins";
+import {
+  registerPlugin,
+  AutoColumnSize,
+  ContextMenu,
+  DropdownMenu,
+  UndoRedo,
+} from "handsontable/plugins";
 
 registerPlugin(AutoColumnSize);
 registerPlugin(ContextMenu);
 registerPlugin(DropdownMenu);
 registerPlugin(UndoRedo);
 
-const ExampleSpreadsheetRetool = ({ model }) => {
+const ExampleSpreadsheetRetoolDerived = ({ model }) => {
   const hotRef = useRef(null);
   const [tableData, setTableData] = useState([]);
-  const cellIdsRef = useRef([]);
-  const handledCellsRef = useRef(new Set());
-  const initializedRef = useRef(false); // only initialize once
+  const cellIdsRef = useRef([]); // 2D array storing unique ids per cell
+  const initializedRef = useRef(false);
 
-  // Initialize only once or when structure changes
+  // Initialize table only once or when fields/rows change
   useEffect(() => {
     if (!model?.data?.length) return;
-    if (initializedRef.current) return; // prevent overwriting existing tableData
+    if (initializedRef.current) return;
 
     const fields = model.fields || [];
 
+    // Build table values
     const data = model.data.map((row) => fields.map((f) => row[f]));
 
+    // Build _ids mapping aligned with table cells
     const cellIds = model.data.map((row) => {
       if (row._idsMap) return fields.map((f) => row._idsMap[f]);
       return fields.map(() => row[model.id]);
@@ -32,9 +39,10 @@ const ExampleSpreadsheetRetool = ({ model }) => {
 
     setTableData(data);
     cellIdsRef.current = cellIds;
-    initializedRef.current = true; // mark as initialized
+    initializedRef.current = true;
   }, [model]);
 
+  // Handle edits in Handsontable
   const afterChange = (changes, type) => {
     if (!changes || type !== "edit") return;
 
@@ -42,35 +50,48 @@ const ExampleSpreadsheetRetool = ({ model }) => {
     const idField = model.id || "unique_id";
     const valueField = model.value || "hc";
 
-    changes.forEach(([row, col, oldVal, newVal]) => {
-      // Update internal tableData so edits are persistent
-      setTableData((prev) => {
-        const updated = [...prev];
+    // Update tableData in place
+    setTableData((prev) => {
+      const updated = [...prev];
+      changes.forEach(([row, col, oldVal, newVal]) => {
         updated[row] = [...updated[row]];
         updated[row][col] = Number(newVal);
-        return updated;
       });
-
-      const data_id = cellIdsRef.current[row][col];
-      const cellKey = `${data_id}-${col}`;
-      if (handledCellsRef.current.has(cellKey)) return;
-
-      const updatedCell = {
-        [idField]: data_id,
-        [valueField]: Number(newVal),
-        timestamp: new Date().toISOString(),
-      };
-
-      window.parent.postMessage(
-        {
-          type: "UPDATED_DATA",
-          updated_data: [updatedCell],
-        },
-        "*"
-      );
-
-      handledCellsRef.current.add(cellKey);
+      return updated;
     });
+
+    // Send **only the changed cells**
+    const updatedCells = changes.map(([row, col, oldVal, newVal]) => ({
+      [idField]: cellIdsRef.current[row][col],
+      [valueField]: Number(newVal),
+      timestamp: new Date().toISOString(),
+    }));
+
+    window.parent.postMessage(
+      {
+        type: "UPDATED_DATA",
+        updated_data: updatedCells,
+      },
+      "*"
+    );
+  };
+
+  // Function to derive full updated_data from table
+  const getFullUpdatedData = () => {
+    const idField = model.id || "unique_id";
+    const valueField = model.value || "hc";
+
+    const updatedData = [];
+    tableData.forEach((row, rowIndex) => {
+      row.forEach((val, colIndex) => {
+        updatedData.push({
+          [idField]: cellIdsRef.current[rowIndex][colIndex],
+          [valueField]: val,
+          timestamp: new Date().toISOString(),
+        });
+      });
+    });
+    return updatedData;
   };
 
   if (!tableData?.length) return <></>;
@@ -98,8 +119,21 @@ const ExampleSpreadsheetRetool = ({ model }) => {
           <HotColumn key={f} data={i} type="numeric" readOnly={false} />
         ))}
       </HotTable>
+
+      {/* Optional: button to post full current table state */}
+      <button
+        onClick={() => {
+          const fullData = getFullUpdatedData();
+          window.parent.postMessage(
+            { type: "UPDATED_DATA", updated_data: fullData },
+            "*"
+          );
+        }}
+      >
+        Send Full Updated Data
+      </button>
     </div>
   );
 };
 
-export default ExampleSpreadsheetRetool;
+export default ExampleSpreadsheetRetoolDerived;
