@@ -1,84 +1,187 @@
-import React, { useEffect, useRef } from "react";
-import Handsontable from "handsontable";
-import "handsontable/dist/handsontable.full.min.css";
+import { licenseKey } from '../config.json';
+import React, { useCallback, useEffect, useState } from 'react';
+import './styles.css';
+import isEqual from 'lodash/isEqual';
+import find from 'lodash/find';
+import filter from 'lodash/filter';
+import { HotTable, HotColumn } from "@handsontable/react";
+import "handsontable/dist/handsontable.min.css";
+import { 
+  registerPlugin,
+  AutoColumnSize,
+  Autofill,
+  ColumnSummary,
+  ColumnSorting,
+  ManualColumnFreeze,
+  ContextMenu,
+  DropdownMenu,
+  UndoRedo
+} from 'handsontable/plugins';
 
-export default function HotEditor({ model, onChange }) {
-  const hotRef = useRef(null);
-  const containerRef = useRef(null);
+import { HyperFormula } from 'hyperformula';
+import { applyGrand, applyRow, applySub, changesToData, dataToRows } from './helpers';
 
-  // Keep last reported changes so we do not duplicate output
-  const lastCycleIds = useRef(new Set());
+registerPlugin(AutoColumnSize);
+registerPlugin(Autofill);
+registerPlugin(ColumnSummary);
+registerPlugin(ColumnSorting);
+registerPlugin(ManualColumnFreeze);
+registerPlugin(ContextMenu);
+registerPlugin(DropdownMenu);
+registerPlugin(UndoRedo);
 
-  // Initialize HOT once
+const hf = HyperFormula.buildEmpty({
+  licenseKey: 'internal-use-in-handsontable'
+});
+
+const sheetName = hf.addSheet("main");
+const sheetId = hf.getSheetId(sheetName);
+
+const ExampleSpreadsheet = ({ triggerQuery, model, modelUpdate }) => {
+
+  const [data, setData] = useState([]);
+  const [formatted_data, setFormattedData] = useState([]);
+  const [all_changes, setAllChanges] = useState([]);
+
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!isEqual(model.data, data)) {
+      refreshData();
+    }
+  }, [model]);
 
-    hotRef.current = new Handsontable(containerRef.current, {
-      data: model?.data ?? [],
-      rowHeaders: true,
-      colHeaders: model?.columns ?? [],
-      licenseKey: "non-commercial-and-evaluation",
 
-      afterChange: function (changes, source) {
-        if (source === "loadData" || !changes) return;
+  useEffect(() => {
+    if (all_changes.length > 0) {
+      const updated_data = changesToData(
+        formatted_data,
+        all_changes,
+        model.totals?.row_total ? true : false
+      );
+      modelUpdate({ updated_data });
+    }
+  }, [all_changes]);
 
-        // Reset the changed-cell tracker on every new input event
-        lastCycleIds.current = new Set();
 
-        // Allow HOT to finish adding changed_cell classes before processing
-        setTimeout(() => {
-          const hot = hotRef.current;
-          const updated = [];
+  const refreshData = () => {
+    if (!model.data) return;
 
-          // Scan DOM for any cells with class "changed_cell"
-          const changedCells = containerRef.current.querySelectorAll(
-            ".changed_cell"
-          );
+    setData(model.data);
+    setAllChanges([]);
+    modelUpdate({ updated_data: [] });
 
-          changedCells.forEach((cell) => {
-            const row = hot.getCoords(cell).row;
-            const col = hot.getCoords(cell).col;
-            const prop = hot.colToProp(col);
-            const rowData = hot.getSourceDataAtRow(row);
+    let formatted = dataToRows(
+      model.data,
+      model.pivot,
+      model.groups,
+      model.value,
+      model.id
+    );
 
-            if (!rowData) return;
-            const unique_id = rowData.unique_id;
-            const hc = rowData.hc;
-            const value = hot.getDataAtCell(row, col);
+    if (model.totals && formatted.data.length) {
+      if (model.totals.row_total) formatted = applyRow(formatted);
+      if (model.totals.sub_total) formatted = applySub(formatted);
+      if (model.totals.grand_total) formatted = applyGrand(formatted);
+    }
 
-            // Avoid duplicates within the same edit cycle
-            const hash = `${unique_id}-${prop}`;
-            if (lastCycleIds.current.has(hash)) return;
-            lastCycleIds.current.add(hash);
+    setFormattedData(formatted);
 
-            updated.push({
-              unique_id
-            });
-          });
+    if (formatted.data.length) {
+      hf.setSheetContent(sheetId, formatted.data);
+    }
+  };
 
-          // Output only THIS cycle's changed cells
-          onChange({ updated_data: updated });
+
+  // FIXED afterChange: dedupe based on row+col, always keeping the newest value
+  const afterChange = (changes, type) => {
+    if (type === "loadData") return;
+
+    if (['edit', 'Autofill.fill', 'CopyPaste.cut', 'CopyPaste.paste'].includes(type)) {
+      setAllChanges(prev => {
+        const map = new Map();
+
+        // keep old
+        prev.forEach(ch => {
+          map.set(`${ch[0]}-${ch[1]}`, ch);
         });
-      },
 
-      cells(row, col) {
-        return {
-          className: "cell_default"
-        };
-      }
-    });
-  }, []);
+        // apply new (overwrites old)
+        changes.forEach(ch => {
+          map.set(`${ch[0]}-${ch[1]}`, ch);
+        });
 
-  // If Retool updates data externally, reload HOT
-  useEffect(() => {
-    if (!hotRef.current || !model?.data) return;
-    hotRef.current.loadData(model.data);
-  }, [model?.data]);
+        return Array.from(map.values());
+      });
+    }
+  };
+
+
+  const columnSummaryStyle = (row, col) => {
+    if (!formatted_data) return {};
+    let classNames = [];
+
+    // highlight modified cells
+    const found = all_changes.filter(o => o[0] === row && o[1] === col);
+    if (found.length) {
+      return { className: "changed_cell" };
+    }
+
+    if (formatted_data.grand_total_row === row) classNames.push("grand_total");
+    if (formatted_data.row_total_column === col) classNames.push("row_total");
+    if (formatted_data.sub_total_rows?.includes(row)) classNames.push("sub_total");
+
+    if (classNames.length) {
+      return { className: classNames.join(" "), readOnly: true };
+    }
+
+    return {};
+  };
+
+
+  if (!formatted_data?.data?.length) return <></>;
 
   return (
-    <div
-      ref={containerRef}
-      style={{ width: "100%", height: "100%", overflow: "hidden" }}
-    />
+    <div style={{ height: "100vh", width: "100vw" }}>
+      <HotTable
+        columnSorting={!!model.columnSorting}
+        undoRedo={true}
+        contextMenu={!!model.contextMenu}
+        manualColumnFreeze={model.fixedColumnsLeft > 0}
+        fixedColumnsLeft={model.fixedColumnsLeft || 0}
+        data={formatted_data.data}
+        licenseKey={licenseKey}
+        colWidths={model.colWidths}
+        fillHandle={{
+          autoInsertRow: false,
+          autoInsertColumn: false,
+        }}
+        cells={columnSummaryStyle}
+        afterChange={afterChange}
+        allowInsertRow={false}
+        allowInsertColumn={false}
+        formulas={{ engine: hf, sheetName }}
+        colHeaders={formatted_data.columns.map((c) => {
+          if (model.labels) {
+            return model.labels[model.fields.indexOf(c)] || c;
+          }
+          return c;
+        })}
+      >
+        {formatted_data.columns.map((c, i) => {
+          if (c !== "_ids") {
+            return (
+              <HotColumn
+                key={c}
+                data={i}
+                readOnly={model.groups.includes(c)}
+                type={model.groups.includes(c) ? "numeric" : "text"}
+              />
+            );
+          }
+          return <React.Fragment key={c} />;
+        })}
+      </HotTable>
+    </div>
   );
-}
+};
+
+export default ExampleSpreadsheet;
