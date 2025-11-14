@@ -1,142 +1,93 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { HotTable, HotColumn } from '@handsontable/react';
-import 'handsontable/dist/handsontable.min.css';
-import { registerPlugin, AutoColumnSize, Autofill, ColumnSummary, ColumnSorting, ManualColumnFreeze, ContextMenu, DropdownMenu, UndoRedo } from 'handsontable/plugins';
-import { HyperFormula } from 'hyperformula';
-import { applyGrand, applyRow, applySub, dataToRows } from './helpers';
+import Handsontable from 'handsontable';
+import 'handsontable/dist/handsontable.full.min.css';
+import { registerPlugin, AutoColumnSize, ContextMenu, DropdownMenu, UndoRedo } from 'handsontable/plugins';
 
 registerPlugin(AutoColumnSize);
-registerPlugin(Autofill);
-registerPlugin(ColumnSummary);
-registerPlugin(ColumnSorting);
-registerPlugin(ManualColumnFreeze);
 registerPlugin(ContextMenu);
 registerPlugin(DropdownMenu);
 registerPlugin(UndoRedo);
 
-// HyperFormula instance
-const hf = HyperFormula.buildEmpty({ licenseKey: 'internal-use-in-handsontable' });
-const sheetName = hf.addSheet("main");
-const sheetId = hf.getSheetId(sheetName);
-
-const ExampleSpreadsheetNoGroupsHandled = ({ model }) => {
+const ExampleSpreadsheetPlainReact = ({ model }) => {
   const hotRef = useRef(null);
-  const [formattedData, setFormattedData] = useState([]);
-  const modelRef = useRef(model);
+  const [tableData, setTableData] = useState([]);
   const handledCellsRef = useRef(new Set());
 
-  // Initialize table data
-  const initializeTable = () => {
-    modelRef.current = model;
-    let formatted = dataToRows(model.data, model.pivot, [], model.value, model.id); // no groups
+  // Initialize table when model changes
+  useEffect(() => {
+    if (!model?.data?.length) return;
 
-    if (model.totals && formatted?.data?.length) {
-      if (model.totals.row_total) formatted = applyRow(formatted);
-      if (model.totals.sub_total) formatted = applySub(formatted);
-      if (model.totals.grand_total) formatted = applyGrand(formatted);
-    }
+    const fields = model.fields || [];
+    const data = model.data.map((row) => {
+      return fields.map(f => row[f]);
+    }).map((row, i) => {
+      // Append _ids array for mapping
+      return [...row, JSON.stringify(model.data[i]._ids || [])];
+    });
 
-    setFormattedData(formatted);
+    setTableData(data);
+    handledCellsRef.current.clear();
+  }, [model]);
 
-    setTimeout(() => {
-      if (hotRef.current) hotRef.current.loadData(formatted.data);
-      hf.clearSheet(sheetId);
-      hf.setSheetContent(sheetId, formatted.data);
-      // Reset handled cells on re-initialization
-      handledCellsRef.current.clear();
-    }, 0);
-  };
-
-  // AfterChange handler
   const afterChange = (changes, type) => {
     if (!changes?.length || type !== 'edit') return;
 
     const hot = hotRef.current.hotInstance;
-    const { id: fieldId, value: valueField } = modelRef.current;
+    const fields = model.fields || [];
+    const idField = model.id || 'unique_id';
+    const valueField = model.value || 'hc';
 
     changes.forEach(([row, col, oldVal, newVal]) => {
-      // Ignore totals/subtotals/grand totals
-      if (
-        formattedData.row_total_column === col ||
-        formattedData.grand_total_row === row ||
-        formattedData.sub_total_rows?.includes(row)
-      ) return;
-
       const rowData = hot.getDataAtRow(row);
       const data_id = JSON.parse(rowData[rowData.length - 1])[col];
-
       const cellKey = `${data_id}-${col}`;
 
-      // Skip if already handled
       if (handledCellsRef.current.has(cellKey)) return;
 
       const updatedCell = {
-        [fieldId]: data_id,
+        [idField]: data_id,
         [valueField]: Number(newVal),
         timestamp: new Date().toISOString()
       };
 
-      // Send updated data
+      // Send updated data to parent window (Retool)
       window.parent.postMessage({
         type: 'UPDATED_DATA',
         updated_data: [updatedCell]
       }, '*');
 
-      // Mark cell as handled
       handledCellsRef.current.add(cellKey);
     });
   };
 
-  // Style / readOnly for totals/subtotals
-  const columnSummaryStyle = (row, col) => {
-    const classNames = [];
-    if (formattedData.grand_total_row === row) classNames.push('grand_total');
-    if (formattedData.row_total_column === col) classNames.push('row_total');
-    if (formattedData.sub_total_rows?.includes(row)) classNames.push('sub_total');
-
-    return classNames.length
-      ? { className: classNames.join(' '), readOnly: classNames.includes('grand_total') || classNames.includes('row_total') || classNames.includes('sub_total') }
-      : {};
-  };
-
-  useEffect(() => {
-    initializeTable();
-  }, [model]);
-
-  if (!formattedData?.data?.length) return <></>;
+  if (!tableData?.length) return <></>;
 
   return (
-    <HotTable
-      ref={hotRef}
-      data={formattedData.data}
-      colHeaders={formattedData.columns.map(c =>
-        modelRef.current?.labels ? modelRef.current.labels[modelRef.current.fields.indexOf(c)] || c : c
-      )}
-      columnSorting={Boolean(modelRef.current?.columnSorting)}
-      undoRedo={true}
-      contextMenu={Boolean(modelRef.current?.contextMenu)}
-      manualColumnFreeze={modelRef.current?.fixedColumnsLeft && Number(modelRef.current.fixedColumnsLeft) > 0}
-      fixedColumnsLeft={modelRef.current?.fixedColumnsLeft || 0}
-      colWidths={modelRef.current?.colWidths}
-      fillHandle={{ autoInsertRow: false, autoInsertColumn: false }}
-      allowInsertRow={false}
-      allowInsertColumn={false}
-      cells={columnSummaryStyle}
-      afterChange={afterChange}
-      formulas={{ engine: hf, sheetName }}
-    >
-      {formattedData.columns.map((c, i) =>
-        c !== '_ids' ? (
-          <HotColumn
-            key={c}
-            data={i}
-            readOnly={false} // all editable except totals/subtotals
-            type="numeric"
-          />
-        ) : <React.Fragment key={c} />
-      )}
-    </HotTable>
+    <div style={{ width: '100%', height: '100%' }}>
+      <HotTable
+        ref={hotRef}
+        data={tableData}
+        colHeaders={model.labels || model.fields}
+        rowHeaders={true}
+        width="100%"
+        height="100%"
+        stretchH="all"
+        manualColumnResize={true}
+        manualRowResize={true}
+        allowInsertRow={false}
+        allowInsertColumn={false}
+        fillHandle={false}
+        contextMenu={true}
+        undoRedo={true}
+        afterChange={afterChange}
+      >
+        {(model.fields || []).map((f, i) => (
+          <HotColumn key={f} data={i} type="numeric" readOnly={false} />
+        ))}
+      </HotTable>
+    </div>
   );
 };
 
-export default ExampleSpreadsheetNoGroupsHandled;
+export default ExampleSpreadsheetPlainReact;
