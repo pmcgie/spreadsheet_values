@@ -34,102 +34,138 @@ export const dataToRows = (data, pivot, groups, value, id) => {
   return { columns, data: out, groups, id, value, pivot_values };
 };
 
-
 /* ============================================================
- * 2. Convert Handsontable change event → ONE clean row
+ * 2. Convert Handsontable change event → clean updated_data
  * ============================================================ */
 export const changesToData = (array_data, changes) => {
   if (!changes?.length) return [];
 
-  const { data, value, groups, id, pivot_values } = array_data;
-
-  // HOT gives us: [rowIndex, colIndex, oldValue, newValue]
+  // Get last change
   const [row, col, oldValue, newValue] = changes[changes.length - 1];
-
-  // If the change is inside one of the group columns → ignore it
-  if (col < groups.length) return [];
+  const { data, value, groups, id, pivot_values, columns } = array_data;
 
   const rowData = data[row];
   if (!rowData) return [];
 
-  // Parse unique_ids column (the last col)
-  const ids_list = JSON.parse(rowData[rowData.length - 1]);
+  // Use column header to find correct pivot index
+  const columnName = columns[col];
+  const pivotIndex = pivot_values.indexOf(columnName);
 
-  // Align pivot index:
-  const pivotIndex = col - groups.length;
+  // If not a pivot column (group or totals), ignore
+  if (pivotIndex === -1) return [];
 
-  // Prevent misalignment or bad indexes
-  if (pivotIndex < 0 || pivotIndex >= ids_list.length) return [];
-
-  const unique_id = ids_list[pivotIndex];
+  const unique_id_list = JSON.parse(rowData[rowData.length - 1]);
+  const unique_id = unique_id_list[pivotIndex];
 
   return [
     {
       [id]: unique_id,
       [value]: newValue === "" || newValue === null ? null : Number(newValue),
-      pivot: pivot_values[pivotIndex],
+      pivot: columnName,
       timestamp: new Date().toISOString()
     }
   ];
 };
 
-
 /* ============================================================
  * 3. Apply row subtotals
  * ============================================================ */
-export const applyRow = (hot, row, groupsLength, pivotCount) => {
-  let sum = 0;
-  for (let i = 0; i < pivotCount; i++) {
-    const v = hot.getDataAtCell(row, groupsLength + i);
-    if (v != null && v !== "" && !isNaN(v)) sum += Number(v);
-  }
-  return sum;
-};
+export const applyRow = (formatted_data) => {
+  let { data, groups, columns } = formatted_data;
+  const insert_index = columns.indexOf(groups[groups.length - 1]) + 1;
+  const last_pivot_index = columns.length - 2;
 
-
-/* ============================================================
- * 4. Apply subtotal section (this is optional)
- * ============================================================ */
-export const applySub = (hot, rows, groupsLength, pivotCount) => {
-  let out = 0;
-  rows.forEach((r) => {
-    const v = applyRow(hot, r, groupsLength, pivotCount);
-    out += v;
+  data.forEach((row, i) => {
+    row.splice(
+      insert_index,
+      0,
+      `=SUM(${cellToGrid(insert_index + 1, i)}:${cellToGrid(last_pivot_index, i)})`
+    );
   });
-  return out;
+
+  columns.splice(insert_index, 0, "Row Total");
+
+  return { ...formatted_data, data, columns, row_total_column: insert_index };
 };
 
+/* ============================================================
+ * 4. Apply subtotal section (optional)
+ * ============================================================ */
+export const applySub = (formatted_data) => {
+  let { data, groups, columns } = formatted_data;
+  const last_group_index = columns.indexOf(groups[groups.length - 1]);
+  let operations = [];
+  groups.slice().reverse().forEach((g, j) => {
+    const group_index = columns.indexOf(g);
+    let last_cell = data[0][group_index];
+    let stack = [];
+
+    if (j > 0) {
+      data.forEach((row, i) => {
+        let curr = row[group_index];
+        if (curr !== last_cell) {
+          operations.push({ label: last_cell, column: group_index, index: i, stack });
+          stack = [i];
+        } else {
+          stack.push(i);
+        }
+        last_cell = curr;
+      });
+      operations.push({ label: last_cell, column: group_index, index: data.length, stack });
+    }
+  });
+
+  let inserts = 0;
+  let sub_total_rows = [];
+  operations = operations.sort((a, b) => a.index - b.index || b.column - a.column);
+
+  operations.forEach((o) => {
+    const sum = Array.from({ length: columns.length }).map((_, i) => {
+      if (i === o.column) return `${o.label} Total`;
+      if (i > last_group_index && i < columns.length - 1) {
+        return `=SUM(${o.stack.map((s) => cellToGrid(i, s + inserts)).join(",")})`;
+      }
+      return "";
+    });
+
+    data.splice(o.index + inserts, 0, sum);
+    sub_total_rows.push(o.index + inserts);
+    inserts++;
+  });
+
+  return { ...formatted_data, data, columns, sub_total_rows };
+};
 
 /* ============================================================
- * 5. Apply overall grand total
+ * 5. Apply grand total
  * ============================================================ */
-export const applyGrand = (hot, groupsLength, pivotCount) => {
-  let total = 0;
-  for (let r = 0; r < hot.countRows(); r++) {
-    total += applyRow(hot, r, groupsLength, pivotCount);
+export const applyGrand = (formatted_data) => {
+  let { data, groups, columns, row_total_column, pivot_values } = formatted_data;
+  const id_column_index = columns.indexOf("_ids");
+  const filtered = [...data.keys()].filter((i) => data[i][id_column_index]);
+
+  let col_pivots = pivot_values.map((pv) => columns.indexOf(pv));
+  if (row_total_column && row_total_column > -1) col_pivots.unshift(row_total_column);
+
+  const sums = col_pivots.map((cp) => filtered.map((f) => `${cellToGrid(cp, f)}`));
+  data.push([...groups.map((p, i) => (i === 0 ? "Grand Total" : "")), ...sums.map((s) => `=SUM(${s.join(",")})`)]);
+
+  return { ...formatted_data, data, grand_total_row: data.length - 1 };
+};
+
+/* ============================================================
+ * 6. Column index → Excel-style letter
+ * ============================================================ */
+export const colToLetter = (col) => {
+  let letters = "";
+  while (col >= 0) {
+    letters = String.fromCharCode((col % 26) + 65) + letters;
+    col = Math.floor(col / 26) - 1;
   }
-  return total;
+  return letters;
 };
-
 
 /* ============================================================
- * 6. Convert a col index → Excel letter (A, B, C...)
+ * 7. Cell coordinates → "A1" style
  * ============================================================ */
-export const colToLetter = (column) => {
-  let temp;
-  let letter = "";
-  while (column >= 0) {
-    temp = column % 26;
-    letter = String.fromCharCode(temp + 65) + letter;
-    column = Math.floor(column / 26) - 1;
-  }
-  return letter;
-};
-
-
-/* ============================================================
- * 7. Convert a {row, col} → "A1" style coordinate
- * ============================================================ */
-export const cellToGrid = (row, col) => {
-  return `${colToLetter(col)}${row + 1}`;
-};
+export const cellToGrid = (col, row) => `${colToLetter(col)}${row + 1}`;
