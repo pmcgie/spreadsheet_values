@@ -1,95 +1,87 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useRef } from "react";
 import Handsontable from "handsontable";
 import "handsontable/dist/handsontable.full.min.css";
 
-export default function Spreadsheet({ model, onChange }) {
-  const tableRef = useRef(null);
+export default function HotEditor({ model, onChange }) {
   const hotRef = useRef(null);
+  const containerRef = useRef(null);
 
-  // Local storage of visible grid
-  const [gridData, setGridData] = useState([]);
+  // Keep last reported changes so we do not duplicate output
+  const lastCycleIds = useRef(new Set());
 
-  // Convert model.data into Handsontable format
+  // Initialize HOT once
   useEffect(() => {
-    if (!model?.data) return;
+    if (!containerRef.current) return;
 
-    const rows = model.data.map(row => {
-      // row includes pivot values + JSON array of ids
-      return [...row];
-    });
-
-    setGridData(rows);
-  }, [model]);
-
-  // Initialize Handsontable
-  useEffect(() => {
-    if (!tableRef.current) return;
-
-    hotRef.current = new Handsontable(tableRef.current, {
-      data: gridData,
+    hotRef.current = new Handsontable(containerRef.current, {
+      data: model?.data ?? [],
       rowHeaders: true,
-      colHeaders: model?.columns || [],
+      colHeaders: model?.columns ?? [],
       licenseKey: "non-commercial-and-evaluation",
-      width: "100%",
-      height: 500,
-      manualColumnMove: true,
-      manualRowMove: true,
-      contextMenu: true,
 
-      // *********** CRITICAL FIX ***************
-      // Only returns cells edited NOW.
-      afterChange: (changes, source) => {
-        if (!changes || source === "loadData") return;
+      afterChange: function (changes, source) {
+        if (source === "loadData" || !changes) return;
 
-        const latestUpdates = [];
+        // Reset the changed-cell tracker on every new input event
+        lastCycleIds.current = new Set();
 
-        changes.forEach(change => {
-          const [rowIndex, colIndex, oldVal, newVal] = change;
+        // Allow HOT to finish adding changed_cell classes before processing
+        setTimeout(() => {
+          const hot = hotRef.current;
+          const updated = [];
 
-          if (rowIndex == null || colIndex == null) return;
-          if (newVal === oldVal) return;
+          // Scan DOM for any cells with class "changed_cell"
+          const changedCells = containerRef.current.querySelectorAll(
+            ".changed_cell"
+          );
 
-          const row = hotRef.current.getSourceDataAtRow(rowIndex);
-          if (!row) return;
+          changedCells.forEach((cell) => {
+            const row = hot.getCoords(cell).row;
+            const col = hot.getCoords(cell).col;
+            const prop = hot.colToProp(col);
+            const rowData = hot.getSourceDataAtRow(row);
 
-          // Last column always contains JSON of IDs from pivot
-          const idJson = row[row.length - 1];
-          let idArray = [];
+            if (!rowData) return;
+            const unique_id = rowData.unique_id;
+            const hc = rowData.hc;
+            const value = hot.getDataAtCell(row, col);
 
-          try {
-            idArray = JSON.parse(idJson);
-          } catch (e) {
-            console.error("ID array parse error", e);
-            return;
-          }
+            // Avoid duplicates within the same edit cycle
+            const hash = `${unique_id}-${prop}`;
+            if (lastCycleIds.current.has(hash)) return;
+            lastCycleIds.current.add(hash);
 
-          // Determine which ID corresponds to this edited pivot column
-          const pivotIndex = colIndex - model.groups.length;
-          const uniqueId = idArray[pivotIndex];
-
-          if (!uniqueId) return;
-
-          latestUpdates.push({
-            [model.id]: uniqueId,
-            [model.value]: Number(newVal),
-            timestamp: Date.now()
+            updated.push({
+              unique_id,
+              hc,
+              column: prop,
+              value,
+            });
           });
+
+          // Output only THIS cycle's changed cells
+          onChange({ updated_data: updated });
         });
+      },
 
-        // 🚀 Send back ONLY the cell(s) changed now
-        onChange({ updated_data: latestUpdates });
+      cells(row, col) {
+        return {
+          className: "cell_default"
+        };
       }
-      // *****************************************
     });
+  }, []);
 
-    return () => {
-      if (hotRef.current) hotRef.current.destroy();
-    };
-  }, [gridData]);
+  // If Retool updates data externally, reload HOT
+  useEffect(() => {
+    if (!hotRef.current || !model?.data) return;
+    hotRef.current.loadData(model.data);
+  }, [model?.data]);
 
   return (
-    <div style={{ width: "100%", height: "100%" }}>
-      <div ref={tableRef} />
-    </div>
+    <div
+      ref={containerRef}
+      style={{ width: "100%", height: "100%", overflow: "hidden" }}
+    />
   );
 }
