@@ -35,40 +35,36 @@ export const dataToRows = (data, pivot, groups, value, id) => {
 };
 
 /* ============================================================
- * 2. Convert Handsontable change event → clean updated_data
+ * 2. Convert Handsontable change event → only currently changed cells
  * ============================================================ */
 export const changesToData = (array_data, changes) => {
   if (!changes?.length) return [];
 
-  // Get last change
-  const [row, col, oldValue, newValue] = changes[changes.length - 1];
-  const { data, value, groups, id, pivot_values, columns } = array_data;
+  const { data, value, id, pivot_values, columns } = array_data;
 
-  const rowData = data[row];
-  if (!rowData) return [];
+  return changes.map(([row, col, oldVal, newVal]) => {
+    const rowData = data[row];
+    if (!rowData) return null;
 
-  // Use column header to find correct pivot index
-  const columnName = columns[col];
-  const pivotIndex = pivot_values.indexOf(columnName);
+    // Map by column header to pivot index
+    const columnName = columns[col];
+    const pivotIndex = pivot_values.indexOf(columnName);
+    if (pivotIndex === -1) return null;
 
-  // If not a pivot column (group or totals), ignore
-  if (pivotIndex === -1) return [];
+    const unique_id_list = JSON.parse(rowData[rowData.length - 1]);
+    const unique_id = unique_id_list[pivotIndex];
 
-  const unique_id_list = JSON.parse(rowData[rowData.length - 1]);
-  const unique_id = unique_id_list[pivotIndex];
-
-  return [
-    {
+    return {
       [id]: unique_id,
-      [value]: newValue === "" || newValue === null ? null : Number(newValue),
+      [value]: newVal === "" || newVal == null ? null : Number(newVal),
       pivot: columnName,
-      timestamp: new Date().toISOString()
-    }
-  ];
+      timestamp: new Date().toISOString(),
+    };
+  }).filter(Boolean);
 };
 
 /* ============================================================
- * 3. Apply row subtotals
+ * 3. Apply row totals
  * ============================================================ */
 export const applyRow = (formatted_data) => {
   let { data, groups, columns } = formatted_data;
@@ -89,7 +85,7 @@ export const applyRow = (formatted_data) => {
 };
 
 /* ============================================================
- * 4. Apply subtotal section (optional)
+ * 4. Apply subtotals
  * ============================================================ */
 export const applySub = (formatted_data) => {
   let { data, groups, columns } = formatted_data;
@@ -154,7 +150,7 @@ export const applyGrand = (formatted_data) => {
 };
 
 /* ============================================================
- * 6. Column index → Excel-style letter
+ * 6. Column index → Excel letter
  * ============================================================ */
 export const colToLetter = (col) => {
   let letters = "";
