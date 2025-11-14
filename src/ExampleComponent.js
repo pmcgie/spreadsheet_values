@@ -1,107 +1,95 @@
 import React, { useEffect, useRef, useState } from "react";
-import { HotTable, HotColumn } from "@handsontable/react";
 import Handsontable from "handsontable";
-import "handsontable/dist/handsontable.full.min.css";
-import {
-  registerPlugin,
-  AutoColumnSize,
-  ContextMenu,
-  DropdownMenu,
-  UndoRedo,
-} from "handsontable/plugins";
+import "handsontable/dist/handsontable.full.css";
 
-registerPlugin(AutoColumnSize);
-registerPlugin(ContextMenu);
-registerPlugin(DropdownMenu);
-registerPlugin(UndoRedo);
-
-const ExampleSpreadsheetHcAndId = ({ model }) => {
+export default function Spreadsheet({ model, updateModel }) {
+  const tableRef = useRef(null);
   const hotRef = useRef(null);
+
   const [tableData, setTableData] = useState([]);
-  const cellIdsRef = useRef([]); // 2D array storing unique ids per cell
-  const initializedRef = useRef(false);
+  const cellIdsRef = useRef([]); // 2D array → each (row,col) has unique_id + hc
 
-  // Initialize table once
+  // ---------------------------
+  // Initialize table from model
+  // ---------------------------
   useEffect(() => {
-    if (!model?.data?.length) return;
-    if (initializedRef.current) return;
+    if (model?.data && model?.data.length > 0) {
+      const incoming = model.data.map(row => row.hc_values);
+      const ids = model.data.map(row => row.unique_ids);
 
-    const fields = model.fields || [];
-
-    const data = model.data.map((row) => fields.map((f) => row[f]));
-
-    const cellIds = model.data.map((row) => {
-      if (row._idsMap) return fields.map((f) => row._idsMap[f]);
-      return fields.map(() => row.unique_id); // use unique_id as default
-    });
-
-    setTableData(data);
-    cellIdsRef.current = cellIds;
-    initializedRef.current = true;
+      setTableData(incoming);
+      cellIdsRef.current = ids;
+    }
   }, [model]);
 
-  // afterChange handler
-  const afterChange = (changes, type) => {
-    if (!changes || type !== "edit") return;
+  // ---------------------------
+  // Setup Handsontable
+  // ---------------------------
+  useEffect(() => {
+    if (!tableRef.current || tableData.length === 0) return;
 
-    setTableData((prev) => {
-      const updated = [...prev];
-      changes.forEach(([row, col, oldVal, newVal]) => {
-        updated[row] = [...updated[row]];
-        updated[row][col] = Number(newVal);
-      });
-      return updated;
+    if (hotRef.current) hotRef.current.destroy();
+
+    const hot = new Handsontable(tableRef.current, {
+      data: tableData,
+      rowHeaders: true,
+      colHeaders: model?.columns || true,
+      licenseKey: "non-commercial-and-evaluation",
+      manualColumnMove: true,
+      manualRowMove: true,
+      contextMenu: true,
+      width: "100%",
+      height: 450,
+
+      // -----------------------------------
+      // ON CELL CHANGE — ONLY RETURN CHANGED
+      // -----------------------------------
+      afterChange: (changes, source) => {
+        if (!changes || source === "loadData") return;
+
+        const changedCells = [];
+
+        changes.forEach(([visualRow, visualCol, oldVal, newVal]) => {
+          // ignore unchanged
+          if (oldVal === newVal) return;
+
+          // convert visual → physical coordinates
+          const physicalRow = hot.toPhysicalRow(visualRow);
+          const physicalCol = hot.toPhysicalColumn(visualCol);
+
+          // correct unique_id based on the physical location
+          const uniqueId = cellIdsRef.current?.[physicalRow]?.[physicalCol];
+
+          // update model for Retool
+          changedCells.push({
+            row: physicalRow,
+            column: physicalCol,
+            unique_id: uniqueId,
+            hc: Number(newVal),
+            timestamp: new Date().toISOString(),
+          });
+        });
+
+        // ONLY send changed cells to updated_data
+        updateModel({
+          ...model,
+          updated_data: changedCells,
+        });
+      },
     });
 
-    // Collect only cells marked "changed_cell"
-    const hot = hotRef.current.hotInstance;
-    const updatedCells = [];
-
-    hot.rootElement.querySelectorAll("td.changed_cell").forEach((td) => {
-      const coords = hot.getCoords(td);
-      if (!coords) return;
-      const { row, col } = coords;
-
-      updatedCells.push({
-        unique_id: cellIdsRef.current[row][col],
-        hc: Number(tableData[row][col]),
-        timestamp: new Date().toISOString(),
-      });
-    });
-
-    window.parent.postMessage(
-      { type: "UPDATED_DATA", updated_data: updatedCells },
-      "*"
-    );
-  };
-
-  if (!tableData?.length) return <></>;
+    hotRef.current = hot;
+  }, [tableData]);
 
   return (
-    <div style={{ width: "100%", height: "100%" }}>
-      <HotTable
-        ref={hotRef}
-        data={tableData}
-        colHeaders={model.labels || model.fields}
-        rowHeaders={true}
-        width="100%"
-        height="100%"
-        stretchH="all"
-        manualColumnResize={true}
-        manualRowResize={true}
-        allowInsertRow={false}
-        allowInsertColumn={false}
-        fillHandle={false}
-        contextMenu={true}
-        undoRedo={true}
-        afterChange={afterChange}
-      >
-        {(model.fields || []).map((f, i) => (
-          <HotColumn key={f} data={i} type="numeric" readOnly={false} />
-        ))}
-      </HotTable>
-    </div>
+    <div
+      ref={tableRef}
+      style={{
+        width: "100%",
+        height: "100%",
+        overflow: "hidden",
+        border: "1px solid #ddd",
+      }}
+    />
   );
-};
-
-export default ExampleSpreadsheetHcAndId;
+}
