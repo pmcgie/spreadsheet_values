@@ -52,10 +52,7 @@ export default function HotEditor({ model, onChange }) {
             lastCycleIds.current.add(hash);
 
             updated.push({
-              unique_id,
-              hc,
-              column: prop,
-              value,
+              unique_id
             });
           });
 
