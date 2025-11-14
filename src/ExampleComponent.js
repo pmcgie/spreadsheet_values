@@ -9,9 +9,10 @@ registerPlugin(ContextMenu);
 registerPlugin(DropdownMenu);
 registerPlugin(UndoRedo);
 
-const ExampleSpreadsheetPlainReact = ({ model }) => {
+const ExampleSpreadsheetPlainReactFixed = ({ model }) => {
   const hotRef = useRef(null);
   const [tableData, setTableData] = useState([]);
+  const cellIdsRef = useRef([]); // 2D array storing unique ids per cell
   const handledCellsRef = useRef(new Set());
 
   // Initialize table when model changes
@@ -19,30 +20,36 @@ const ExampleSpreadsheetPlainReact = ({ model }) => {
     if (!model?.data?.length) return;
 
     const fields = model.fields || [];
-    const data = model.data.map((row) => {
-      return fields.map(f => row[f]);
-    }).map((row, i) => {
-      // Append _ids array for mapping
-      return [...row, JSON.stringify(model.data[i]._ids || [])];
+
+    // Prepare table data
+    const data = model.data.map((row) => fields.map(f => row[f]));
+
+    // Prepare a 2D array of cell IDs aligned with tableData
+    // If each row has multiple unique IDs per field, store them in _idsMap (object)
+    // fallback: use the row id itself for all cells
+    const cellIds = model.data.map((row) => {
+      if (row._idsMap) {
+        return fields.map(f => row._idsMap[f]);
+      }
+      return fields.map(() => row[model.id]);
     });
 
     setTableData(data);
+    cellIdsRef.current = cellIds;
     handledCellsRef.current.clear();
   }, [model]);
 
+  // afterChange handler
   const afterChange = (changes, type) => {
-    if (!changes?.length || type !== 'edit') return;
+    if (!changes || type !== 'edit') return;
 
     const hot = hotRef.current.hotInstance;
-    const fields = model.fields || [];
     const idField = model.id || 'unique_id';
     const valueField = model.value || 'hc';
 
     changes.forEach(([row, col, oldVal, newVal]) => {
-      const rowData = hot.getDataAtRow(row);
-      const data_id = JSON.parse(rowData[rowData.length - 1])[col];
+      const data_id = cellIdsRef.current[row][col]; // reliable cell-specific ID
       const cellKey = `${data_id}-${col}`;
-
       if (handledCellsRef.current.has(cellKey)) return;
 
       const updatedCell = {
@@ -51,7 +58,7 @@ const ExampleSpreadsheetPlainReact = ({ model }) => {
         timestamp: new Date().toISOString()
       };
 
-      // Send updated data to parent window (Retool)
+      // Send only the changed cell to parent
       window.parent.postMessage({
         type: 'UPDATED_DATA',
         updated_data: [updatedCell]
@@ -90,4 +97,4 @@ const ExampleSpreadsheetPlainReact = ({ model }) => {
   );
 };
 
-export default ExampleSpreadsheetPlainReact;
+export default ExampleSpreadsheetPlainReactFixed;
