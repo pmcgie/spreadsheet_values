@@ -15,7 +15,7 @@ registerPlugin(ContextMenu);
 registerPlugin(DropdownMenu);
 registerPlugin(UndoRedo);
 
-const ExampleSpreadsheetChangedCellOnly = ({ model }) => {
+const ExampleSpreadsheetChangedCellOnlyLive = ({ model }) => {
   const hotRef = useRef(null);
   const [tableData, setTableData] = useState([]);
   const cellIdsRef = useRef([]); // 2D array storing unique ids per cell
@@ -54,7 +54,7 @@ const ExampleSpreadsheetChangedCellOnly = ({ model }) => {
       return updated;
     });
 
-    // Collect only cells with class "changed_cell"
+    // Send **only cells currently marked "changed_cell"**
     const hot = hotRef.current.hotInstance;
     const updatedCells = [];
 
@@ -108,4 +108,4 @@ const ExampleSpreadsheetChangedCellOnly = ({ model }) => {
   );
 };
 
-export default ExampleSpreadsheetChangedCellOnly;
+export default ExampleSpreadsheetChangedCellOnlyLive;
