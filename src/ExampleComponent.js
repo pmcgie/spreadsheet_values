@@ -1,68 +1,73 @@
-import React, { useEffect, useRef, useState } from 'react';
-import { HotTable, HotColumn } from '@handsontable/react';
-import Handsontable from 'handsontable';
-import 'handsontable/dist/handsontable.full.min.css';
-import { registerPlugin, AutoColumnSize, ContextMenu, DropdownMenu, UndoRedo } from 'handsontable/plugins';
+import React, { useEffect, useRef, useState } from "react";
+import { HotTable, HotColumn } from "@handsontable/react";
+import Handsontable from "handsontable";
+import "handsontable/dist/handsontable.full.min.css";
+import { registerPlugin, AutoColumnSize, ContextMenu, DropdownMenu, UndoRedo } from "handsontable/plugins";
 
 registerPlugin(AutoColumnSize);
 registerPlugin(ContextMenu);
 registerPlugin(DropdownMenu);
 registerPlugin(UndoRedo);
 
-const ExampleSpreadsheetPlainReactFixed = ({ model }) => {
+const ExampleSpreadsheetRetool = ({ model }) => {
   const hotRef = useRef(null);
   const [tableData, setTableData] = useState([]);
-  const cellIdsRef = useRef([]); // 2D array storing unique ids per cell
+  const cellIdsRef = useRef([]);
   const handledCellsRef = useRef(new Set());
+  const initializedRef = useRef(false); // only initialize once
 
-  // Initialize table when model changes
+  // Initialize only once or when structure changes
   useEffect(() => {
     if (!model?.data?.length) return;
+    if (initializedRef.current) return; // prevent overwriting existing tableData
 
     const fields = model.fields || [];
 
-    // Prepare table data
-    const data = model.data.map((row) => fields.map(f => row[f]));
+    const data = model.data.map((row) => fields.map((f) => row[f]));
 
-    // Prepare a 2D array of cell IDs aligned with tableData
-    // If each row has multiple unique IDs per field, store them in _idsMap (object)
-    // fallback: use the row id itself for all cells
     const cellIds = model.data.map((row) => {
-      if (row._idsMap) {
-        return fields.map(f => row._idsMap[f]);
-      }
+      if (row._idsMap) return fields.map((f) => row._idsMap[f]);
       return fields.map(() => row[model.id]);
     });
 
     setTableData(data);
     cellIdsRef.current = cellIds;
-    handledCellsRef.current.clear();
+    initializedRef.current = true; // mark as initialized
   }, [model]);
 
-  // afterChange handler
   const afterChange = (changes, type) => {
-    if (!changes || type !== 'edit') return;
+    if (!changes || type !== "edit") return;
 
     const hot = hotRef.current.hotInstance;
-    const idField = model.id || 'unique_id';
-    const valueField = model.value || 'hc';
+    const idField = model.id || "unique_id";
+    const valueField = model.value || "hc";
 
     changes.forEach(([row, col, oldVal, newVal]) => {
-      const data_id = cellIdsRef.current[row][col]; // reliable cell-specific ID
+      // Update internal tableData so edits are persistent
+      setTableData((prev) => {
+        const updated = [...prev];
+        updated[row] = [...updated[row]];
+        updated[row][col] = Number(newVal);
+        return updated;
+      });
+
+      const data_id = cellIdsRef.current[row][col];
       const cellKey = `${data_id}-${col}`;
       if (handledCellsRef.current.has(cellKey)) return;
 
       const updatedCell = {
         [idField]: data_id,
         [valueField]: Number(newVal),
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
       };
 
-      // Send only the changed cell to parent
-      window.parent.postMessage({
-        type: 'UPDATED_DATA',
-        updated_data: [updatedCell]
-      }, '*');
+      window.parent.postMessage(
+        {
+          type: "UPDATED_DATA",
+          updated_data: [updatedCell],
+        },
+        "*"
+      );
 
       handledCellsRef.current.add(cellKey);
     });
@@ -71,7 +76,7 @@ const ExampleSpreadsheetPlainReactFixed = ({ model }) => {
   if (!tableData?.length) return <></>;
 
   return (
-    <div style={{ width: '100%', height: '100%' }}>
+    <div style={{ width: "100%", height: "100%" }}>
       <HotTable
         ref={hotRef}
         data={tableData}
@@ -97,4 +102,4 @@ const ExampleSpreadsheetPlainReactFixed = ({ model }) => {
   );
 };
 
-export default ExampleSpreadsheetPlainReactFixed;
+export default ExampleSpreadsheetRetool;
