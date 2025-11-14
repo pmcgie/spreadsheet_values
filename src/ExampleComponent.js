@@ -15,7 +15,7 @@ registerPlugin(ContextMenu);
 registerPlugin(DropdownMenu);
 registerPlugin(UndoRedo);
 
-const ExampleSpreadsheetChangedCellOnlyLive = ({ model }) => {
+const ExampleSpreadsheetHcAndId = ({ model }) => {
   const hotRef = useRef(null);
   const [tableData, setTableData] = useState([]);
   const cellIdsRef = useRef([]); // 2D array storing unique ids per cell
@@ -32,7 +32,7 @@ const ExampleSpreadsheetChangedCellOnlyLive = ({ model }) => {
 
     const cellIds = model.data.map((row) => {
       if (row._idsMap) return fields.map((f) => row._idsMap[f]);
-      return fields.map(() => row[model.id]);
+      return fields.map(() => row.unique_id); // use unique_id as default
     });
 
     setTableData(data);
@@ -44,7 +44,6 @@ const ExampleSpreadsheetChangedCellOnlyLive = ({ model }) => {
   const afterChange = (changes, type) => {
     if (!changes || type !== "edit") return;
 
-    // Update tableData
     setTableData((prev) => {
       const updated = [...prev];
       changes.forEach(([row, col, oldVal, newVal]) => {
@@ -54,7 +53,7 @@ const ExampleSpreadsheetChangedCellOnlyLive = ({ model }) => {
       return updated;
     });
 
-    // Send **only cells currently marked "changed_cell"**
+    // Collect only cells marked "changed_cell"
     const hot = hotRef.current.hotInstance;
     const updatedCells = [];
 
@@ -62,13 +61,10 @@ const ExampleSpreadsheetChangedCellOnlyLive = ({ model }) => {
       const coords = hot.getCoords(td);
       if (!coords) return;
       const { row, col } = coords;
-      const data_id = cellIdsRef.current[row][col];
-      const valueField = model.value || "hc";
-      const idField = model.id || "unique_id";
 
       updatedCells.push({
-        [idField]: data_id,
-        [valueField]: Number(tableData[row][col]),
+        unique_id: cellIdsRef.current[row][col],
+        hc: Number(tableData[row][col]),
         timestamp: new Date().toISOString(),
       });
     });
@@ -108,4 +104,4 @@ const ExampleSpreadsheetChangedCellOnlyLive = ({ model }) => {
   );
 };
 
-export default ExampleSpreadsheetChangedCellOnlyLive;
+export default ExampleSpreadsheetHcAndId;
