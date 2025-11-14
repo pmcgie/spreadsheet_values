@@ -14,18 +14,19 @@ registerPlugin(ContextMenu);
 registerPlugin(DropdownMenu);
 registerPlugin(UndoRedo);
 
+// HyperFormula instance
 const hf = HyperFormula.buildEmpty({ licenseKey: 'internal-use-in-handsontable' });
 const sheetName = hf.addSheet("main");
 const sheetId = hf.getSheetId(sheetName);
 
-const ExampleSpreadsheetFixed = ({ model }) => {
+const ExampleSpreadsheetNoGroups = ({ model }) => {
   const hotRef = useRef(null);
   const [formattedData, setFormattedData] = useState([]);
   const modelRef = useRef(model);
 
   const initializeTable = () => {
     modelRef.current = model;
-    let formatted = dataToRows(model.data, model.pivot, model.groups, model.value, model.id);
+    let formatted = dataToRows(model.data, model.pivot, [], model.value, model.id); // groups = []
 
     if (model.totals && formatted?.data?.length) {
       if (model.totals.row_total) formatted = applyRow(formatted);
@@ -43,12 +44,10 @@ const ExampleSpreadsheetFixed = ({ model }) => {
   };
 
   const afterChange = (changes, type) => {
-    if (!changes?.length) return;
-    const hot = hotRef.current.hotInstance;
-    const { id: fieldId, value: valueField, groups } = modelRef.current;
+    if (!changes?.length || type !== 'edit') return;
 
-    // Only track true user edits, ignore formula recalcs
-    if (type !== 'edit') return;
+    const hot = hotRef.current.hotInstance;
+    const { id: fieldId, value: valueField } = modelRef.current;
 
     const [row, col, oldVal, newVal] = changes[changes.length - 1];
 
@@ -60,8 +59,7 @@ const ExampleSpreadsheetFixed = ({ model }) => {
     ) return;
 
     const rowData = hot.getDataAtRow(row);
-    const id_index = col - groups.length;
-    const data_id = JSON.parse(rowData[rowData.length - 1])[id_index];
+    const data_id = JSON.parse(rowData[rowData.length - 1])[col]; // no groups offset
 
     const updatedCell = {
       [fieldId]: data_id,
@@ -69,7 +67,6 @@ const ExampleSpreadsheetFixed = ({ model }) => {
       timestamp: new Date().toISOString()
     };
 
-    // Send updated data
     window.parent.postMessage({
       type: 'UPDATED_DATA',
       updated_data: [updatedCell]
@@ -81,7 +78,9 @@ const ExampleSpreadsheetFixed = ({ model }) => {
     if (formattedData.grand_total_row === row) classNames.push('grand_total');
     if (formattedData.row_total_column === col) classNames.push('row_total');
     if (formattedData.sub_total_rows?.includes(row)) classNames.push('sub_total');
-    return classNames.length ? { className: classNames.join(' '), readOnly: classNames.includes('grand_total') || classNames.includes('row_total') || classNames.includes('sub_total') } : {};
+    return classNames.length
+      ? { className: classNames.join(' '), readOnly: classNames.includes('grand_total') || classNames.includes('row_total') || classNames.includes('sub_total') }
+      : {};
   };
 
   useEffect(() => {
@@ -115,8 +114,8 @@ const ExampleSpreadsheetFixed = ({ model }) => {
           <HotColumn
             key={c}
             data={i}
-            readOnly={modelRef.current?.groups?.includes(c)}
-            type={modelRef.current?.groups?.includes(c) ? 'numeric' : 'text'}
+            readOnly={false} // no groups, all editable except totals/subtotals
+            type="numeric"
           />
         ) : <React.Fragment key={c} />
       )}
@@ -124,4 +123,4 @@ const ExampleSpreadsheetFixed = ({ model }) => {
   );
 };
 
-export default ExampleSpreadsheetFixed;
+export default ExampleSpreadsheetNoGroups;
