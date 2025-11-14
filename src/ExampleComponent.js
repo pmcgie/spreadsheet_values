@@ -19,14 +19,16 @@ const hf = HyperFormula.buildEmpty({ licenseKey: 'internal-use-in-handsontable' 
 const sheetName = hf.addSheet("main");
 const sheetId = hf.getSheetId(sheetName);
 
-const ExampleSpreadsheetNoGroups = ({ model }) => {
+const ExampleSpreadsheetNoGroupsHandled = ({ model }) => {
   const hotRef = useRef(null);
   const [formattedData, setFormattedData] = useState([]);
   const modelRef = useRef(model);
+  const handledCellsRef = useRef(new Set());
 
+  // Initialize table data
   const initializeTable = () => {
     modelRef.current = model;
-    let formatted = dataToRows(model.data, model.pivot, [], model.value, model.id); // groups = []
+    let formatted = dataToRows(model.data, model.pivot, [], model.value, model.id); // no groups
 
     if (model.totals && formatted?.data?.length) {
       if (model.totals.row_total) formatted = applyRow(formatted);
@@ -40,44 +42,58 @@ const ExampleSpreadsheetNoGroups = ({ model }) => {
       if (hotRef.current) hotRef.current.loadData(formatted.data);
       hf.clearSheet(sheetId);
       hf.setSheetContent(sheetId, formatted.data);
+      // Reset handled cells on re-initialization
+      handledCellsRef.current.clear();
     }, 0);
   };
 
+  // AfterChange handler
   const afterChange = (changes, type) => {
     if (!changes?.length || type !== 'edit') return;
 
     const hot = hotRef.current.hotInstance;
     const { id: fieldId, value: valueField } = modelRef.current;
 
-    const [row, col, oldVal, newVal] = changes[changes.length - 1];
+    changes.forEach(([row, col, oldVal, newVal]) => {
+      // Ignore totals/subtotals/grand totals
+      if (
+        formattedData.row_total_column === col ||
+        formattedData.grand_total_row === row ||
+        formattedData.sub_total_rows?.includes(row)
+      ) return;
 
-    // Ignore totals/subtotals/grand totals
-    if (
-      formattedData.row_total_column === col ||
-      formattedData.grand_total_row === row ||
-      formattedData.sub_total_rows?.includes(row)
-    ) return;
+      const rowData = hot.getDataAtRow(row);
+      const data_id = JSON.parse(rowData[rowData.length - 1])[col];
 
-    const rowData = hot.getDataAtRow(row);
-    const data_id = JSON.parse(rowData[rowData.length - 1])[col]; // no groups offset
+      const cellKey = `${data_id}-${col}`;
 
-    const updatedCell = {
-      [fieldId]: data_id,
-      [valueField]: Number(newVal),
-      timestamp: new Date().toISOString()
-    };
+      // Skip if already handled
+      if (handledCellsRef.current.has(cellKey)) return;
 
-    window.parent.postMessage({
-      type: 'UPDATED_DATA',
-      updated_data: [updatedCell]
-    }, '*');
+      const updatedCell = {
+        [fieldId]: data_id,
+        [valueField]: Number(newVal),
+        timestamp: new Date().toISOString()
+      };
+
+      // Send updated data
+      window.parent.postMessage({
+        type: 'UPDATED_DATA',
+        updated_data: [updatedCell]
+      }, '*');
+
+      // Mark cell as handled
+      handledCellsRef.current.add(cellKey);
+    });
   };
 
+  // Style / readOnly for totals/subtotals
   const columnSummaryStyle = (row, col) => {
     const classNames = [];
     if (formattedData.grand_total_row === row) classNames.push('grand_total');
     if (formattedData.row_total_column === col) classNames.push('row_total');
     if (formattedData.sub_total_rows?.includes(row)) classNames.push('sub_total');
+
     return classNames.length
       ? { className: classNames.join(' '), readOnly: classNames.includes('grand_total') || classNames.includes('row_total') || classNames.includes('sub_total') }
       : {};
@@ -114,7 +130,7 @@ const ExampleSpreadsheetNoGroups = ({ model }) => {
           <HotColumn
             key={c}
             data={i}
-            readOnly={false} // no groups, all editable except totals/subtotals
+            readOnly={false} // all editable except totals/subtotals
             type="numeric"
           />
         ) : <React.Fragment key={c} />
@@ -123,4 +139,4 @@ const ExampleSpreadsheetNoGroups = ({ model }) => {
   );
 };
 
-export default ExampleSpreadsheetNoGroups;
+export default ExampleSpreadsheetNoGroupsHandled;
