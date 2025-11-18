@@ -176,6 +176,4 @@ const colToLetter = (col) => {
   return out;
 };
 
-export const cellToGrid = (col, row) => {
-  return `${colToLetter(col)}${row + 1}`;
-};
+export const cellToGrid = (col, row) => `${colToLetter(col)}${row + 1}`;

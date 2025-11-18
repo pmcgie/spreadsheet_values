@@ -56,20 +56,18 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
     modelUpdate({ updated_data: [] });
 
     let formatted = dataToRows(model.data, model.pivot, model.groups, model.value, model.id);
+
+    // Convert all $/comma to numeric BEFORE applying totals
+    formatted.data = formatted.data.map(row => row.map(cell => parseNumeric(cell) ?? cell));
+
     if (model.totals && formatted.data.length) {
       if (model.totals.row_total) formatted = applyRow(formatted);
       if (model.totals.sub_total) formatted = applySub(formatted);
       if (model.totals.grand_total) formatted = applyGrand(formatted);
     }
 
-    // Convert all $/comma strings to numeric for HyperFormula
-    const numericData = formatted.data.map(row =>
-      row.map(cell => parseNumeric(cell))
-    );
-
+    hf.setSheetContent(sheetId, formatted.data);
     setFormattedData(formatted);
-
-    if (formatted.data.length) hf.setSheetContent(sheetId, numericData);
   }
 
   function afterChange(changes, type) {
@@ -80,9 +78,7 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
         const map = new Map();
         prev.forEach(ch => map.set(`${ch[0]}-${ch[1]}`, ch));
         changes.forEach(ch => {
-          // Convert $5,000 -> 5000
-          const numeric = parseNumeric(ch[3]);
-          if (numeric !== null) ch[3] = numeric;
+          ch[3] = parseNumeric(ch[3]) ?? ch[3];
           map.set(`${ch[0]}-${ch[1]}`, ch);
         });
         return Array.from(map.values());
