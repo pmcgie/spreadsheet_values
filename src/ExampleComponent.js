@@ -92,29 +92,50 @@ const ExampleSpreadsheet = ({ triggerQuery, model, modelUpdate }) => {
 
 
   // FIXED afterChange: dedupe based on row+col, always keeping the newest value
-  const afterChange = (changes, type) => {
-    if (type === "loadData") return;
+const afterChange = (changes, source) => {
+  if (source === "loadData" || !changes) return;
 
-    if (['edit', 'Autofill.fill', 'CopyPaste.cut', 'CopyPaste.paste'].includes(type)) {
-      setAllChanges(prev => {
-        const map = new Map();
+  // Only track real edits
+  if (['edit', 'Autofill.fill', 'CopyPaste.cut', 'CopyPaste.paste'].includes(source)) {
 
-        // keep old
-        prev.forEach(ch => {
-          map.set(`${ch[0]}-${ch[1]}`, ch);
-        });
+    setAllChanges(prev => {
+      const map = new Map();
 
-        // apply new (overwrites old)
-        changes.forEach(ch => {
-          const cleaned = normalizeNumber(ch[3]);
-          map.set(`${ch[0]}-${ch[1]}`, [ch[0], ch[1], ch[2], cleaned]);
-        });
-
-
-        return Array.from(map.values());
+      // keep previous changes
+      prev.forEach(ch => {
+        map.set(`${ch[0]}-${ch[1]}`, ch);
       });
-    }
-  };
+
+      changes.forEach(([rowIndex, prop, oldValue, newValue]) => {
+        // Prevent crashes when value hasn't changed
+        if (oldValue === newValue) return;
+
+        // 🔥 Convert numeric prop → real column name
+        // Handsontable sometimes passes a number (index), not the field name
+        let colName = prop;
+        if (typeof prop === "number") {
+          try {
+            const hot = hotRef?.current?.hotInstance;
+            if (hot) {
+              colName = hot.getColHeader(prop);
+            }
+          } catch (e) {
+            console.warn("Failed to resolve column header for prop:", prop);
+          }
+        }
+
+        // 🔥 Always sanitize numbers like "$5,000,000" → 5000000
+        const cleanedValue = normalizeNumber(newValue);
+
+        // Store normalized change
+        map.set(`${rowIndex}-${colName}`, [rowIndex, colName, oldValue, cleanedValue]);
+      });
+
+      return Array.from(map.values());
+    });
+  }
+};
+
 
 
   const columnSummaryStyle = (row, col) => {
