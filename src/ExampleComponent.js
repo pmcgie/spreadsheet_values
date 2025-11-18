@@ -80,7 +80,7 @@ const afterChange = (changes, type) => {
       // keep previous changes
       prev.forEach(ch => map.set(`${ch[0]}-${ch[1]}`, ch));
 
-      // apply new changes (convert to numeric)
+      // convert new changes to numeric
       changes.forEach(ch => {
         const numericValue = parseNumeric(ch[3]);
         map.set(`${ch[0]}-${ch[1]}`, [ch[0], ch[1], ch[2], numericValue]);
@@ -90,6 +90,7 @@ const afterChange = (changes, type) => {
     });
   }
 };
+
 
 
   function columnSummaryStyle(row, col) {

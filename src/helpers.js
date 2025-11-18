@@ -6,7 +6,7 @@ import uniq from "lodash/uniq";
 
 /**
  * Convert string/currency to numeric value
- * Handles "$5,000", "5,000", "5000", etc.
+ * Handles "$5,000", "5,000", "5000.75", etc.
  */
 export const parseNumeric = (v) => {
   if (v === null || v === undefined) return null;
@@ -159,19 +159,7 @@ export const applyGrand = (formatted_data) => {
   let col_pivots = pivot_values.map((pv) => columns.indexOf(pv));
   if (row_total_column && row_total_column > -1) col_pivots.unshift(row_total_column);
 
-  // Convert all relevant values to numeric before summing
-  filtered.forEach((rowIndex) => {
-    col_pivots.forEach((colIndex) => {
-      const cell = data[rowIndex][colIndex];
-      if (typeof cell === "string") {
-        const cleaned = cell.replace(/\$/g, "").replace(/,/g, "");
-        const n = parseFloat(cleaned);
-        data[rowIndex][colIndex] = isNaN(n) ? 0 : n; // replace string with numeric
-      }
-    });
-  });
-
-  // Build formula references for grand total
+  // Values in formatted_data.data are already numeric thanks to parseNumeric in dataToRows/afterChange
   const sums = col_pivots.map((cp) =>
     filtered.map((f) => `${cellToGrid(cp, f)}`)
   );
@@ -183,7 +171,6 @@ export const applyGrand = (formatted_data) => {
 
   return { ...formatted_data, data, grand_total_row: data.length - 1 };
 };
-
 
 /**
  * Helpers for HyperFormula formulas
