@@ -1,70 +1,187 @@
-import React, { useEffect, useRef, useState } from "react";
-import Handsontable from "handsontable";
-import "handsontable/dist/handsontable.full.min.css";
-import {
-  applyCellEdit,
-  calculateGrandTotals,
-  cleanNumber,
-} from "./helper";
+import { licenseKey } from '../config.json';
+import React, { useCallback, useEffect, useState } from 'react';
+import './styles.css';
+import isEqual from 'lodash/isEqual';
+import find from 'lodash/find';
+import filter from 'lodash/filter';
+import { HotTable, HotColumn } from "@handsontable/react";
+import "handsontable/dist/handsontable.min.css";
+import { 
+  registerPlugin,
+  AutoColumnSize,
+  Autofill,
+  ColumnSummary,
+  ColumnSorting,
+  ManualColumnFreeze,
+  ContextMenu,
+  DropdownMenu,
+  UndoRedo
+} from 'handsontable/plugins';
 
-export default function ExampleComponent({ data }) {
-  const hotRef = useRef(null);
-  const containerRef = useRef(null);
+import { HyperFormula } from 'hyperformula';
+import { applyGrand, applyRow, applySub, changesToData, dataToRows } from './helpers';
 
-  const [changesToData, setChangesToData] = useState([]);
+registerPlugin(AutoColumnSize);
+registerPlugin(Autofill);
+registerPlugin(ColumnSummary);
+registerPlugin(ColumnSorting);
+registerPlugin(ManualColumnFreeze);
+registerPlugin(ContextMenu);
+registerPlugin(DropdownMenu);
+registerPlugin(UndoRedo);
+
+const hf = HyperFormula.buildEmpty({
+  licenseKey: 'internal-use-in-handsontable'
+});
+
+const sheetName = hf.addSheet("main");
+const sheetId = hf.getSheetId(sheetName);
+
+const ExampleSpreadsheet = ({ triggerQuery, model, modelUpdate }) => {
+
+  const [data, setData] = useState([]);
+  const [formatted_data, setFormattedData] = useState([]);
+  const [all_changes, setAllChanges] = useState([]);
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!isEqual(model.data, data)) {
+      refreshData();
+    }
+  }, [model]);
 
-    hotRef.current = new Handsontable(containerRef.current, {
-      data,
-      rowHeaders: true,
-      colHeaders: true,
-      width: "100%",
-      height: 450,
-      licenseKey: "non-commercial-and-evaluation",
 
-      // Allow all editing
-      manualColumnResize: true,
-      manualRowResize: true,
+  useEffect(() => {
+    if (all_changes.length > 0) {
+      const updated_data = changesToData(
+        formatted_data,
+        all_changes,
+        model.totals?.row_total ? true : false
+      );
+      modelUpdate({ updated_data });
+    }
+  }, [all_changes]);
 
-      afterChange: (change, source) => {
-        if (source === "loadData" || !change) return;
 
-        change.forEach(([rowIndex, prop, oldValue, newValue]) => {
-          if (oldValue === newValue) return;
+  const refreshData = () => {
+    if (!model.data) return;
 
-          const row = data[rowIndex];
-          const rowId = row.rowId;
+    setData(model.data);
+    setAllChanges([]);
+    modelUpdate({ updated_data: [] });
 
-          // Save update cleanly & isolated
-          setChangesToData((prev) =>
-            applyCellEdit(prev, rowId, prop, newValue)
-          );
+    let formatted = dataToRows(
+      model.data,
+      model.pivot,
+      model.groups,
+      model.value,
+      model.id
+    );
+
+    if (model.totals && formatted.data.length) {
+      if (model.totals.row_total) formatted = applyRow(formatted);
+      if (model.totals.sub_total) formatted = applySub(formatted);
+      if (model.totals.grand_total) formatted = applyGrand(formatted);
+    }
+
+    setFormattedData(formatted);
+
+    if (formatted.data.length) {
+      hf.setSheetContent(sheetId, formatted.data);
+    }
+  };
+
+
+  // FIXED afterChange: dedupe based on row+col, always keeping the newest value
+  const afterChange = (changes, type) => {
+    if (type === "loadData") return;
+
+    if (['edit', 'Autofill.fill', 'CopyPaste.cut', 'CopyPaste.paste'].includes(type)) {
+      setAllChanges(prev => {
+        const map = new Map();
+
+        // keep old
+        prev.forEach(ch => {
+          map.set(`${ch[0]}-${ch[1]}`, ch);
         });
-      },
-    });
 
-    return () => {
-      if (hotRef.current) hotRef.current.destroy();
-    };
-  }, [data]);
+        // apply new (overwrites old)
+        changes.forEach(ch => {
+          map.set(`${ch[0]}-${ch[1]}`, ch);
+        });
 
-  const totals = calculateGrandTotals(data, changesToData);
+        return Array.from(map.values());
+      });
+    }
+  };
+
+
+  const columnSummaryStyle = (row, col) => {
+    if (!formatted_data) return {};
+    let classNames = [];
+
+    // highlight modified cells
+    const found = all_changes.filter(o => o[0] === row && o[1] === col);
+    if (found.length) {
+      return { className: "changed_cell" };
+    }
+
+    if (formatted_data.grand_total_row === row) classNames.push("grand_total");
+    if (formatted_data.row_total_column === col) classNames.push("row_total");
+    if (formatted_data.sub_total_rows?.includes(row)) classNames.push("sub_total");
+
+    if (classNames.length) {
+      return { className: classNames.join(" "), readOnly: true };
+    }
+
+    return {};
+  };
+
+
+  if (!formatted_data?.data?.length) return <></>;
 
   return (
-    <div style={{ padding: 20 }}>
-      <h2>Editable Table</h2>
-      <div
-        ref={containerRef}
-        style={{
-          border: "1px solid #ccc",
-          marginBottom: "20px",
+    <div style={{ height: "100vh", width: "100vw" }}>
+      <HotTable
+        columnSorting={!!model.columnSorting}
+        undoRedo={true}
+        contextMenu={!!model.contextMenu}
+        manualColumnFreeze={model.fixedColumnsLeft > 0}
+        fixedColumnsLeft={model.fixedColumnsLeft || 0}
+        data={formatted_data.data}
+        licenseKey={licenseKey}
+        colWidths={model.colWidths}
+        fillHandle={{
+          autoInsertRow: false,
+          autoInsertColumn: false,
         }}
-      />
-
-      <h3>Grand Totals</h3>
-      <pre>{JSON.stringify(totals, null, 2)}</pre>
+        cells={columnSummaryStyle}
+        afterChange={afterChange}
+        allowInsertRow={false}
+        allowInsertColumn={false}
+        formulas={{ engine: hf, sheetName }}
+        colHeaders={formatted_data.columns.map((c) => {
+          if (model.labels) {
+            return model.labels[model.fields.indexOf(c)] || c;
+          }
+          return c;
+        })}
+      >
+        {formatted_data.columns.map((c, i) => {
+          if (c !== "_ids") {
+            return (
+              <HotColumn
+                key={c}
+                data={i}
+                readOnly={model.groups.includes(c)}
+                type={model.groups.includes(c) ? "numeric" : "text"}
+              />
+            );
+          }
+          return <React.Fragment key={c} />;
+        })}
+      </HotTable>
     </div>
   );
-}
+};
+
+export default ExampleSpreadsheet;
