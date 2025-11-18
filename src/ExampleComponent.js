@@ -1,25 +1,12 @@
 import { licenseKey } from '../config.json';
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import './styles.css';
 import isEqual from 'lodash/isEqual';
-import find from 'lodash/find';
-import filter from 'lodash/filter';
 import { HotTable, HotColumn } from "@handsontable/react";
 import "handsontable/dist/handsontable.min.css";
-import { 
-  registerPlugin,
-  AutoColumnSize,
-  Autofill,
-  ColumnSummary,
-  ColumnSorting,
-  ManualColumnFreeze,
-  ContextMenu,
-  DropdownMenu,
-  UndoRedo
-} from 'handsontable/plugins';
-
+import { registerPlugin, AutoColumnSize, Autofill, ColumnSummary, ColumnSorting, ManualColumnFreeze, ContextMenu, DropdownMenu, UndoRedo } from 'handsontable/plugins';
 import { HyperFormula } from 'hyperformula';
-import { applyGrand, applyRow, applySub, changesToData, dataToRows } from './helpers';
+import { applyGrand, applyRow, applySub, changesToData, dataToRows, parseNumeric } from './helpers';
 
 registerPlugin(AutoColumnSize);
 registerPlugin(Autofill);
@@ -33,12 +20,10 @@ registerPlugin(UndoRedo);
 const hf = HyperFormula.buildEmpty({
   licenseKey: 'internal-use-in-handsontable'
 });
-
 const sheetName = hf.addSheet("main");
 const sheetId = hf.getSheetId(sheetName);
 
 const ExampleSpreadsheet = ({ triggerQuery, model, modelUpdate }) => {
-
   const [data, setData] = useState([]);
   const [formatted_data, setFormattedData] = useState([]);
   const [all_changes, setAllChanges] = useState([]);
@@ -49,18 +34,16 @@ const ExampleSpreadsheet = ({ triggerQuery, model, modelUpdate }) => {
     }
   }, [model]);
 
-
   useEffect(() => {
     if (all_changes.length > 0) {
       const updated_data = changesToData(
         formatted_data,
         all_changes,
-        model.totals?.row_total ? true : false
+        model.totals?.row_total
       );
       modelUpdate({ updated_data });
     }
   }, [all_changes]);
-
 
   const refreshData = () => {
     if (!model.data) return;
@@ -69,14 +52,7 @@ const ExampleSpreadsheet = ({ triggerQuery, model, modelUpdate }) => {
     setAllChanges([]);
     modelUpdate({ updated_data: [] });
 
-    let formatted = dataToRows(
-      model.data,
-      model.pivot,
-      model.groups,
-      model.value,
-      model.id
-    );
-
+    let formatted = dataToRows(model.data, model.pivot, model.groups, model.value, model.id);
     if (model.totals && formatted.data.length) {
       if (model.totals.row_total) formatted = applyRow(formatted);
       if (model.totals.sub_total) formatted = applySub(formatted);
@@ -90,77 +66,55 @@ const ExampleSpreadsheet = ({ triggerQuery, model, modelUpdate }) => {
     }
   };
 
+  // -------------------------
+  // CLEAN INPUT BEFORE HF
+  // -------------------------
+  const sanitizeInput = (v) => {
+    if (typeof v !== "string") return v;
+    return v.replace(/[$,]/g, "");
+  };
 
-  // FIXED afterChange: dedupe based on row+col, always keeping the newest value
-const afterChange = (changes, source) => {
-  if (source === "loadData" || !changes) return;
+  const afterChange = (changes, type) => {
+    if (type === "loadData") return;
+    if (!changes) return;
 
-  // Only track real edits
-  if (['edit', 'Autofill.fill', 'CopyPaste.cut', 'CopyPaste.paste'].includes(source)) {
+    if (['edit', 'Autofill.fill', 'CopyPaste.cut', 'CopyPaste.paste'].includes(type)) {
+      changes.forEach(ch => ch[3] = sanitizeInput(ch[3]));
 
-    setAllChanges(prev => {
-      const map = new Map();
-
-      // keep previous changes
-      prev.forEach(ch => {
-        map.set(`${ch[0]}-${ch[1]}`, ch);
+      setAllChanges(prev => {
+        const map = new Map();
+        prev.forEach(ch => map.set(`${ch[0]}-${ch[1]}`, ch));
+        changes.forEach(ch => map.set(`${ch[0]}-${ch[1]}`, ch));
+        return Array.from(map.values());
       });
-
-      changes.forEach(([rowIndex, prop, oldValue, newValue]) => {
-        // Prevent crashes when value hasn't changed
-        if (oldValue === newValue) return;
-
-        // 🔥 Convert numeric prop → real column name
-        // Handsontable sometimes passes a number (index), not the field name
-        let colName = prop;
-        if (typeof prop === "number") {
-          try {
-            const hot = hotRef?.current?.hotInstance;
-            if (hot) {
-              colName = hot.getColHeader(prop);
-            }
-          } catch (e) {
-            console.warn("Failed to resolve column header for prop:", prop);
-          }
-        }
-
-        // 🔥 Always sanitize numbers like "$5,000,000" → 5000000
-        const cleanedValue = normalizeNumber(newValue);
-
-        // Store normalized change
-        map.set(`${rowIndex}-${colName}`, [rowIndex, colName, oldValue, cleanedValue]);
-      });
-
-      return Array.from(map.values());
-    });
-  }
-};
-
-
+    }
+  };
 
   const columnSummaryStyle = (row, col) => {
     if (!formatted_data) return {};
     let classNames = [];
 
-    // highlight modified cells
     const found = all_changes.filter(o => o[0] === row && o[1] === col);
-    if (found.length) {
-      return { className: "changed_cell" };
-    }
+    if (found.length) return { className: "changed_cell" };
 
     if (formatted_data.grand_total_row === row) classNames.push("grand_total");
     if (formatted_data.row_total_column === col) classNames.push("row_total");
     if (formatted_data.sub_total_rows?.includes(row)) classNames.push("sub_total");
 
-    if (classNames.length) {
-      return { className: classNames.join(" "), readOnly: true };
-    }
-
+    if (classNames.length) return { className: classNames.join(" "), readOnly: true };
     return {};
   };
 
-
   if (!formatted_data?.data?.length) return <></>;
+
+  // -------------------------
+  // DISPLAY FORMATTED CURRENCY
+  // -------------------------
+  const renderCell = (value) => {
+    const num = parseNumeric(value);
+    if (num === null) return value;
+    return `$${num.toLocaleString()}`;
+  };
 
   return (
     <div style={{ height: "100vh", width: "100vw" }}>
@@ -170,22 +124,17 @@ const afterChange = (changes, source) => {
         contextMenu={!!model.contextMenu}
         manualColumnFreeze={model.fixedColumnsLeft > 0}
         fixedColumnsLeft={model.fixedColumnsLeft || 0}
-        data={formatted_data.data}
+        data={formatted_data.data.map(r => r.map(renderCell))}
         licenseKey={licenseKey}
         colWidths={model.colWidths}
-        fillHandle={{
-          autoInsertRow: false,
-          autoInsertColumn: false,
-        }}
+        fillHandle={{ autoInsertRow: false, autoInsertColumn: false }}
         cells={columnSummaryStyle}
         afterChange={afterChange}
         allowInsertRow={false}
         allowInsertColumn={false}
         formulas={{ engine: hf, sheetName }}
         colHeaders={formatted_data.columns.map((c) => {
-          if (model.labels) {
-            return model.labels[model.fields.indexOf(c)] || c;
-          }
+          if (model.labels) return model.labels[model.fields.indexOf(c)] || c;
           return c;
         })}
       >

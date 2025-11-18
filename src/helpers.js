@@ -5,11 +5,10 @@ import find from "lodash/find";
 import filter from "lodash/filter";
 import uniq from "lodash/uniq";
 
-/* -------------------------  
+/* -------------------------
    SAFE VALUE PARSING
    ------------------------- */
-
-const parseNumeric = (v) => {
+export const parseNumeric = (v) => {
   if (v === null || v === undefined) return null;
   if (typeof v === "number") return v;
 
@@ -69,7 +68,6 @@ export const dataToRows = (data, pivot, groups, value, id) => {
 
 /* -------------------------
    CHANGES → UPDATE PAYLOAD
-   (SAFE FOR CURRENCY INPUT)
    ------------------------- */
 export const changesToData = (array_data, changes, row_total = false) => {
   const { data, value, groups, id } = array_data;
@@ -110,7 +108,7 @@ export const changesToData = (array_data, changes, row_total = false) => {
 };
 
 /* -------------------------
-   APPLY ROW TOTALS
+   APPLY ROW TOTAL
    ------------------------- */
 export const applyRow = (formatted_data) => {
   let { data, groups, columns } = formatted_data;
@@ -138,7 +136,6 @@ export const applyRow = (formatted_data) => {
 
 /* -------------------------
    APPLY SUBTOTALS
-   WORKS WITH CURRENCY
    ------------------------- */
 export const applySub = (formatted_data) => {
   let { data, groups, columns } = formatted_data;
@@ -190,7 +187,7 @@ export const applySub = (formatted_data) => {
           .map((s) => cellToGrid(i, s + inserts))
           .join(',')})`;
       }
-      return "";
+      return null; // <-- null instead of ""
     });
 
     data.splice(o.index + inserts, 0, sum);
@@ -208,7 +205,6 @@ export const applySub = (formatted_data) => {
 
 /* -------------------------
    APPLY GRAND TOTAL
-   WORKS WITH CURRENCY
    ------------------------- */
 export const applyGrand = (formatted_data) => {
   let { data, groups, columns, pivot_values, row_total_column } = formatted_data;
@@ -228,7 +224,7 @@ export const applyGrand = (formatted_data) => {
   if (!data) return formatted_data;
 
   data.push([
-    ...groups.map((p, i) => (i === 0 ? "Grand Total" : "")),
+    ...groups.map((p, i) => (i === 0 ? "Grand Total" : null)),
     ...sums.map((s) => `=SUM(${s.join(',')})`),
   ]);
 
@@ -240,7 +236,7 @@ export const applyGrand = (formatted_data) => {
 };
 
 /* -------------------------
-   HELPERS
+   CELL / LETTER HELPERS
    ------------------------- */
 const colToLetter = (col) => {
   const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
