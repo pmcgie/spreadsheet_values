@@ -151,25 +151,39 @@ export const applySub = (formatted_data) => {
  */
 export const applyGrand = (formatted_data) => {
   let { data, groups, columns, pivot_values, row_total_column } = formatted_data;
+  if (!data) return formatted_data;
+
   const id_column_index = columns.indexOf("_ids");
   const filtered = [...data.keys()].filter((i) => data[i][id_column_index]);
 
   let col_pivots = pivot_values.map((pv) => columns.indexOf(pv));
   if (row_total_column && row_total_column > -1) col_pivots.unshift(row_total_column);
 
+  // Convert all relevant values to numeric before summing
+  filtered.forEach((rowIndex) => {
+    col_pivots.forEach((colIndex) => {
+      const cell = data[rowIndex][colIndex];
+      if (typeof cell === "string") {
+        const cleaned = cell.replace(/\$/g, "").replace(/,/g, "");
+        const n = parseFloat(cleaned);
+        data[rowIndex][colIndex] = isNaN(n) ? 0 : n; // replace string with numeric
+      }
+    });
+  });
+
+  // Build formula references for grand total
   const sums = col_pivots.map((cp) =>
     filtered.map((f) => `${cellToGrid(cp, f)}`)
   );
 
-  if (!data) return formatted_data;
-
   data.push([
     ...groups.map((p, i) => (i === 0 ? "Grand Total" : "")),
-    ...sums.map((s) => `=SUM(${s.join(',')})`)
+    ...sums.map((s) => `=SUM(${s.join(",")})`)
   ]);
 
   return { ...formatted_data, data, grand_total_row: data.length - 1 };
 };
+
 
 /**
  * Helpers for HyperFormula formulas
