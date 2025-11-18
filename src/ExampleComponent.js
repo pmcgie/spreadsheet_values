@@ -62,19 +62,25 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
       if (model.totals.grand_total) formatted = applyGrand(formatted);
     }
 
+    // Convert all $/comma strings to numeric for HyperFormula
+    const numericData = formatted.data.map(row =>
+      row.map(cell => parseNumeric(cell))
+    );
+
     setFormattedData(formatted);
-    if (formatted.data.length) hf.setSheetContent(sheetId, formatted.data);
+
+    if (formatted.data.length) hf.setSheetContent(sheetId, numericData);
   }
 
   function afterChange(changes, type) {
     if (type === "loadData" || !changes) return;
     const allowedTypes = ['edit', 'Autofill.fill', 'CopyPaste.cut', 'CopyPaste.paste'];
-    if (allowedTypes.indexOf(type) > -1) {
+    if (allowedTypes.includes(type)) {
       setAllChanges(prev => {
         const map = new Map();
         prev.forEach(ch => map.set(`${ch[0]}-${ch[1]}`, ch));
         changes.forEach(ch => {
-          // convert $5,000 -> 5000
+          // Convert $5,000 -> 5000
           const numeric = parseNumeric(ch[3]);
           if (numeric !== null) ch[3] = numeric;
           map.set(`${ch[0]}-${ch[1]}`, ch);

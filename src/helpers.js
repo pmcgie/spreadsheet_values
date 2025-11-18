@@ -9,7 +9,7 @@ export const parseNumeric = (v) => {
   if (v === null || v === undefined) return null;
   if (typeof v === "number") return v;
   if (typeof v === "string") {
-    const cleaned = v.replace(/\$/g, '').replace(/,/g, '');
+    const cleaned = v.replace(/\$/g, "").replace(/,/g, "");
     const n = parseFloat(cleaned);
     return isNaN(n) ? null : n;
   }
