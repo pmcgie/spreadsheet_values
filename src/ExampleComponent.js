@@ -106,8 +106,10 @@ const ExampleSpreadsheet = ({ triggerQuery, model, modelUpdate }) => {
 
         // apply new (overwrites old)
         changes.forEach(ch => {
-          map.set(`${ch[0]}-${ch[1]}`, ch);
+          const cleaned = normalizeNumber(ch[3]);
+          map.set(`${ch[0]}-${ch[1]}`, [ch[0], ch[1], ch[2], cleaned]);
         });
+
 
         return Array.from(map.values());
       });
