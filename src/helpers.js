@@ -5,6 +5,29 @@ import find from "lodash/find";
 import filter from "lodash/filter";
 import uniq from "lodash/uniq";
 
+/* -------------------------  
+   SAFE VALUE PARSING
+   ------------------------- */
+
+const parseNumeric = (v) => {
+  if (v === null || v === undefined) return null;
+  if (typeof v === "number") return v;
+
+  if (typeof v === "string") {
+    const cleaned = v.replace(/[$,]/g, "");
+    const num = Number(cleaned);
+    return Number.isNaN(num) ? null : num;
+  }
+
+  return null;
+};
+
+const pivotValueOrNull = (p, key) =>
+  p && p[key] !== undefined && p[key] !== null ? p[key] : null;
+
+/* -------------------------
+   DATA → TABLE ROWS
+   ------------------------- */
 export const dataToRows = (data, pivot, groups, value, id) => {
   const pivot_values = uniq(data.map((row) => row[pivot]));
   let columns = [...groups, ...pivot_values, "_ids"];
@@ -21,13 +44,15 @@ export const dataToRows = (data, pivot, groups, value, id) => {
     if (!found_group) {
       const items = filter(data, filter_expression);
       const pivots = pivot_values.map((p) => find(items, { [pivot]: p }));
+
       out.push([
         ...cur_group,
-        ...pivots.map((p) => (p && p[value] ? p[value] : null)),
+        ...pivots.map((p) => pivotValueOrNull(p, value)),
         JSON.stringify(
           pivots.map((p) => (p && p[id] ? p[id] : null))
         ),
       ]);
+
       used_groups.push(filter_expression);
     }
   });
@@ -42,28 +67,14 @@ export const dataToRows = (data, pivot, groups, value, id) => {
   };
 };
 
-const normalizeNumber = (val) => {
-  if (val === null || val === undefined) return null;
-
-  // Convert to string
-  let s = String(val).trim();
-
-  // Remove $ and commas
-  s = s.replace(/[$,]/g, '');
-
-  // If it's empty or non-numeric, return null
-  if (s === '' || isNaN(Number(s))) return null;
-
-  return Number(s);
-};
-
-
-// FIXED: Dedupes changes properly before building update array
+/* -------------------------
+   CHANGES → UPDATE PAYLOAD
+   (SAFE FOR CURRENCY INPUT)
+   ------------------------- */
 export const changesToData = (array_data, changes, row_total = false) => {
   const { data, value, groups, id } = array_data;
 
   const map = new Map();
-
   changes.forEach(change => {
     const key = `${change[0]}-${change[1]}`;
     map.set(key, {
@@ -73,21 +84,34 @@ export const changesToData = (array_data, changes, row_total = false) => {
     });
   });
 
-  return Array.from(map.values()).map((item) => {
-    const row = data[item.row];
-    const total_column_adj = row_total ? -1 : 0;
+  return Array.from(map.values())
+    .map((item) => {
+      const row = data[item.row];
+      const total_column_adj = row_total ? -1 : 0;
 
-    const id_index = item.column - groups.length + total_column_adj;
-    const data_id = JSON.parse(row[row.length - 1])[id_index];
+      const id_index = item.column - groups.length + total_column_adj;
+      try {
+        const idsArray = JSON.parse(row[row.length - 1]);
+        const data_id = idsArray && idsArray[id_index] !== undefined ? idsArray[id_index] : null;
+        if (data_id === null) return null;
 
-    return {
-      [id]: data_id,
-      [value]: normalizeNumber(item.new_val),
-    };
-  });
+        const parsed = parseNumeric(item.new_val);
+        if (parsed === null) return null;
+
+        return {
+          [id]: data_id,
+          [value]: parsed,
+        };
+      } catch {
+        return null;
+      }
+    })
+    .filter(Boolean);
 };
 
-
+/* -------------------------
+   APPLY ROW TOTALS
+   ------------------------- */
 export const applyRow = (formatted_data) => {
   let { data, groups, columns } = formatted_data;
   const insert_index = columns.indexOf(groups[groups.length - 1]) + 1;
@@ -112,6 +136,10 @@ export const applyRow = (formatted_data) => {
   };
 };
 
+/* -------------------------
+   APPLY SUBTOTALS
+   WORKS WITH CURRENCY
+   ------------------------- */
 export const applySub = (formatted_data) => {
   let { data, groups, columns } = formatted_data;
   const last_group_index = columns.indexOf(groups[groups.length - 1]);
@@ -178,9 +206,12 @@ export const applySub = (formatted_data) => {
   };
 };
 
+/* -------------------------
+   APPLY GRAND TOTAL
+   WORKS WITH CURRENCY
+   ------------------------- */
 export const applyGrand = (formatted_data) => {
-  let { data, groups, columns, pivot_values, row_total_column } =
-    formatted_data;
+  let { data, groups, columns, pivot_values, row_total_column } = formatted_data;
 
   const id_column_index = columns.indexOf("_ids");
   const filtered = [...data.keys()].filter((i) => data[i][id_column_index]);
@@ -208,6 +239,9 @@ export const applyGrand = (formatted_data) => {
   };
 };
 
+/* -------------------------
+   HELPERS
+   ------------------------- */
 const colToLetter = (col) => {
   const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
   let out = "";
