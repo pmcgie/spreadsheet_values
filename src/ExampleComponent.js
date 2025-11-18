@@ -70,21 +70,27 @@ const ExampleSpreadsheet = ({ model, modelUpdate }) => {
     setFormattedData(formatted);
   }
 
-  function afterChange(changes, type) {
-    if (type === "loadData" || !changes) return;
-    const allowedTypes = ['edit', 'Autofill.fill', 'CopyPaste.cut', 'CopyPaste.paste'];
-    if (allowedTypes.includes(type)) {
-      setAllChanges(prev => {
-        const map = new Map();
-        prev.forEach(ch => map.set(`${ch[0]}-${ch[1]}`, ch));
-        changes.forEach(ch => {
-          ch[3] = parseNumeric(ch[3]) ?? ch[3];
-          map.set(`${ch[0]}-${ch[1]}`, ch);
-        });
-        return Array.from(map.values());
+const afterChange = (changes, type) => {
+  if (type === "loadData") return;
+
+  if (['edit', 'Autofill.fill', 'CopyPaste.cut', 'CopyPaste.paste'].includes(type)) {
+    setAllChanges(prev => {
+      const map = new Map();
+
+      // keep previous changes
+      prev.forEach(ch => map.set(`${ch[0]}-${ch[1]}`, ch));
+
+      // apply new changes (convert to numeric)
+      changes.forEach(ch => {
+        const numericValue = parseNumeric(ch[3]);
+        map.set(`${ch[0]}-${ch[1]}`, [ch[0], ch[1], ch[2], numericValue]);
       });
-    }
+
+      return Array.from(map.values());
+    });
   }
+};
+
 
   function columnSummaryStyle(row, col) {
     if (!formatted_data) return {};

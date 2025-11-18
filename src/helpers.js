@@ -4,7 +4,10 @@ import find from "lodash/find";
 import filter from "lodash/filter";
 import uniq from "lodash/uniq";
 
-// Convert string/currency to number
+/**
+ * Convert string/currency to numeric value
+ * Handles "$5,000", "5,000", "5000", etc.
+ */
 export const parseNumeric = (v) => {
   if (v === null || v === undefined) return null;
   if (typeof v === "number") return v;
@@ -16,7 +19,10 @@ export const parseNumeric = (v) => {
   return null;
 };
 
-// Convert raw data to pivoted rows
+/**
+ * Pivot raw data into table rows
+ * Converts all values to numeric using parseNumeric
+ */
 export const dataToRows = (data, pivot, groups, value, id) => {
   const pivot_values = uniq(data.map((row) => row[pivot]));
   let columns = [...groups, ...pivot_values, "_ids"];
@@ -44,27 +50,23 @@ export const dataToRows = (data, pivot, groups, value, id) => {
     }
   });
 
-  return {
-    columns,
-    data: out,
-    groups,
-    id,
-    value,
-    pivot_values,
-  };
+  return { columns, data: out, groups, id, value, pivot_values };
 };
 
-// Deduplicate changes and build update array
+/**
+ * Deduplicate changes and prepare for backend update
+ */
 export const changesToData = (array_data, changes, row_total = false) => {
   const { data, value, groups, id } = array_data;
   const map = new Map();
 
   changes.forEach(change => {
     const key = `${change[0]}-${change[1]}`;
+    const numericValue = parseNumeric(change[3]);
     map.set(key, {
       row: change[0],
       column: change[1],
-      new_val: parseNumeric(change[3]),
+      new_val: numericValue,
     });
   });
 
@@ -74,14 +76,13 @@ export const changesToData = (array_data, changes, row_total = false) => {
     const id_index = item.column - groups.length + total_column_adj;
     const data_id = JSON.parse(row[row.length - 1])[id_index];
 
-    return {
-      [id]: data_id,
-      [value]: Number(item.new_val),
-    };
+    return { [id]: data_id, [value]: Number(item.new_val) };
   });
 };
 
-// Add Row Totals
+/**
+ * Add Row Totals
+ */
 export const applyRow = (formatted_data) => {
   let { data, groups, columns } = formatted_data;
   const insert_index = columns.indexOf(groups[groups.length - 1]) + 1;
@@ -99,12 +100,15 @@ export const applyRow = (formatted_data) => {
   return { ...formatted_data, data, columns, row_total_column: insert_index };
 };
 
-// Add Subtotals
+/**
+ * Add Subtotals
+ */
 export const applySub = (formatted_data) => {
   let { data, groups, columns } = formatted_data;
   const last_group_index = columns.indexOf(groups[groups.length - 1]);
   let operations = [];
-  groups.reverse().forEach((g, j) => {
+
+  groups.slice().reverse().forEach((g, j) => {
     const group_index = columns.indexOf(g);
     let last_cell = data[0][group_index];
     let stack = [];
@@ -125,6 +129,7 @@ export const applySub = (formatted_data) => {
   let inserts = 0;
   let sub_total_rows = [];
   operations = orderBy(operations, ['index', 'column'], ['asc', 'desc']);
+
   operations.forEach((o) => {
     const sum = Array.from({ length: columns.length }).map((_, i) => {
       if (i === o.column) return `${o.label} Total`;
@@ -141,7 +146,9 @@ export const applySub = (formatted_data) => {
   return { ...formatted_data, data, columns, sub_total_rows };
 };
 
-// Add Grand Total
+/**
+ * Add Grand Total
+ */
 export const applyGrand = (formatted_data) => {
   let { data, groups, columns, pivot_values, row_total_column } = formatted_data;
   const id_column_index = columns.indexOf("_ids");
@@ -164,7 +171,9 @@ export const applyGrand = (formatted_data) => {
   return { ...formatted_data, data, grand_total_row: data.length - 1 };
 };
 
-// Helpers for HyperFormula
+/**
+ * Helpers for HyperFormula formulas
+ */
 const colToLetter = (col) => {
   const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ";
   let out = "";
